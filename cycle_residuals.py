@@ -1,4 +1,5 @@
 import utils
+import thermo
 import time
 import numpy as np
 
@@ -9,7 +10,7 @@ def allam_residuals(vars, S, Component, start, counter):
     # Unpacking variables
     for state in S:
         idx = state.unpack_vars(vars, idx)
-        state.h = utils.mixture_enthalpy(state.T, state.P, state.y, state.spc)
+        state.h = thermo.mixture_enthalpy(state.T, state.P, state.y, state.spc)
     for comp_name in Component:
         idx = Component[comp_name].unpack_vars(vars, idx)
 
@@ -21,7 +22,7 @@ def allam_residuals(vars, S, Component, start, counter):
         print('Run Time:', round(run, 2), '(s)')
         print("Residuals Norm:", np.linalg.norm(residuals))
 
-        top = np.argsort(np.abs(residuals))[-3:]
+        top = np.argsort(np.abs(residuals))[-5:]
         for i in top:
             print(f"  Residual[{i}] = {residuals[i]:.8f}")
 

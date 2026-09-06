@@ -1,7 +1,6 @@
 import utils
 from classes import State, Input, Compressor, Pump, Intercooler, Combustor, Mixer, Turbine
 from classes import Splitter, HX_mult, Condensator, Splitter_CO2_3way, CoolantSplitter
-from asu_setup import setup_asu
 
 P_in  = 3e6  # Pa
 P_out = 8e6  # Pa
@@ -24,15 +23,15 @@ P_out_turb1 = P_max/rp_turb
 P_out_turb2 = P_max/(rp_turb**2)
 P_out_turb3 = P_in
 
-PERC_DELTA_P_Recup = 1  # %
-Perc_Delta_P_IC    = 0.2  # %
+PERC_DELTA_P_Recup = 0.5  # %
+Perc_Delta_P_IC    = 0.1  # %
 
 T_pinch_extra = 5
 T_flue_out = 400  # K — flue gas recuperator exit temperature (above H2O dew point)
 
 T_fuel   = 298.15  # K
 P_fuel   = 7e5  # Pa (7 bar, per Rogalev 2021)
-y_ng     = [0.95, 0.03, 0.02, 0.01]
+y_ng     = [0.94, 0.03, 0.02, 0.01]
 MW_fuel, x_fuel = utils.mass_fraction(y_ng, utils.FUEL_SPECIES)
 
 eta_comp_fuel = 0.85
@@ -43,10 +42,10 @@ LHV_ng = sum(xi * utils.LHV.get(spc.name, 0) for spc, xi in zip(utils.FUEL_SPECI
 K_cool  = 0.06  # El-Masri cooling coefficient
 T_blade = 1120  # K — blade metal temperature limit
 
-y_O2_waste = 0.01
 T_cool = 473  # K — coolant temperature
 
-def build_cycle(exc_O2=1.01, r_CO2_O2=10, TIT=1420, O2_purity=0.99, m_dot_fuel=7.4):
+def build_cycle(exc_O2=1.01, r_CO2_O2=10, TIT=1450, O2_purity=0.99,
+                m_dot_fuel=7.4, T_O2=295, P_O2=P_max):
     
     S = []
     Component = {}
@@ -75,13 +74,21 @@ def build_cycle(exc_O2=1.01, r_CO2_O2=10, TIT=1420, O2_purity=0.99, m_dot_fuel=7
     S.append(S1)
 
     Fuel_comp = Compressor('Fuel Comp1', eta_comp_fuel, pr_comp_fuel, S[0], S[1])
-    Fuel_comp.T_iso = 480  # K
+    Fuel_comp.T_iso = 618  # K
     Component[Fuel_comp.Name] = Fuel_comp
 
-    # ASU subsystem — S2 appended here to preserve S[2] index
-    asu = setup_asu(O2_purity, y_O2_waste)
-    S2 = asu['O2_out']
+    # State 2 (Direct oxygen input)
+    # Its flow rate remains a solver variable fixed by the combustor O2 demand.
+    y_O2 = [O2_purity, 1 - O2_purity]
+    S2 = State('O2 Input', 'Oxygen', spc=utils.AIR_SPECIES)
+    S2.m_dot = 28.8  # kg/s, initial guess only
+    S2.T = T_O2
+    S2.P = P_O2
+    S2.y = list(y_O2)
     S.append(S2)
+
+    O2_in = Input('O2 Input', T_O2, P_O2, y_O2, S[2])
+    Component[O2_in.Name] = O2_in
 
     # State 3 (Compressor 1 Inlet)
     S3 = State('Compressor 1 - Inlet', 'CarbonDioxide')
@@ -95,7 +102,7 @@ def build_cycle(exc_O2=1.01, r_CO2_O2=10, TIT=1420, O2_purity=0.99, m_dot_fuel=7
     S4 = State('Intercooler 1 - Inlet', 'CarbonDioxide')
     S4.m_dot = 580.85  # kg/s
     S4.T = 319.28  # K
-    S4.P = 3776345.4  # Pa
+    S4.P = S3.P*pr_comp  # Pa
     S4.y = [0.9989, 0.0011, 0, 0]  # y_CO2, y_H2O, y_O2, y_N2
     S.append(S4)
 
@@ -107,7 +114,7 @@ def build_cycle(exc_O2=1.01, r_CO2_O2=10, TIT=1420, O2_purity=0.99, m_dot_fuel=7
     S5 = State('Compressor 2 - Inlet', 'CarbonDioxide')
     S5.m_dot = 580.85  # kg/s
     S5.T = 299.15  # K
-    S5.P = 3765016.4  # Pa
+    S5.P = S4.P*(1 - Perc_Delta_P_IC/100)  # Pa
     S5.y = [0.9989, 0.0011, 0, 0]  # y_CO2, y_H2O, y_O2, y_N2
     S.append(S5)
 
@@ -118,7 +125,7 @@ def build_cycle(exc_O2=1.01, r_CO2_O2=10, TIT=1420, O2_purity=0.99, m_dot_fuel=7
     S6 = State('Intercooler 2 - Inlet', 'CarbonDioxide')
     S6.m_dot = 580.85  # kg/s
     S6.T = 319.28  # K
-    S6.P = 4811262.5  # Pa
+    S6.P = S5.P*pr_comp  # Pa
     S6.y = [0.9989, 0.0011, 0, 0]  # y_CO2, y_H2O, y_O2, y_N2
     S.append(S6)
 
@@ -130,7 +137,7 @@ def build_cycle(exc_O2=1.01, r_CO2_O2=10, TIT=1420, O2_purity=0.99, m_dot_fuel=7
     S7 = State('Compressor 3 - Inlet', 'CarbonDioxide')
     S7.m_dot = 580.85  # kg/s
     S7.T = 299.15  # K
-    S7.P = 4796828.7  # Pa
+    S7.P = S6.P*(1 - Perc_Delta_P_IC/100)  # Pa
     S7.y = [0.9989, 0.0011, 0, 0]  # y_CO2, y_H2O, y_O2, y_N2
     S.append(S7)
 
@@ -141,7 +148,7 @@ def build_cycle(exc_O2=1.01, r_CO2_O2=10, TIT=1420, O2_purity=0.99, m_dot_fuel=7
     S8 = State('Intercooler 3 - Inlet', 'CarbonDioxide')
     S8.m_dot = 580.85  # kg/s
     S8.T = 319.02  # K
-    S8.P = 6129801.3  # Pa
+    S8.P = S7.P*pr_comp  # Pa
     S8.y = [0.9989, 0.0011, 0, 0]  # y_CO2, y_H2O, y_O2, y_N2
     S.append(S8)
 
@@ -153,7 +160,7 @@ def build_cycle(exc_O2=1.01, r_CO2_O2=10, TIT=1420, O2_purity=0.99, m_dot_fuel=7
     S9 = State('Compressor 4 - Inlet', 'CarbonDioxide')
     S9.m_dot = 580.85  # kg/s
     S9.T = 299.15  # K
-    S9.P = 7809689.0  # Pa
+    S9.P = S8.P*(1 - Perc_Delta_P_IC/100)  # Pa
     S9.y = [0.9989, 0.0011, 0, 0]  # y_CO2, y_H2O, y_O2, y_N2
     S.append(S9)
 
@@ -164,7 +171,7 @@ def build_cycle(exc_O2=1.01, r_CO2_O2=10, TIT=1420, O2_purity=0.99, m_dot_fuel=7
     S10 = State('Intercooler 4 - Inlet', 'CarbonDioxide')
     S10.m_dot = 580.85  # kg/s
     S10.T = 317.48  # K
-    S10.P = 7809689.0  # Pa
+    S10.P = S9.P*pr_comp  # Pa
     S10.y = [0.9989, 0.0011, 0, 0]  # y_CO2, y_H2O, y_O2, y_N2
     S.append(S10)
 
@@ -176,7 +183,7 @@ def build_cycle(exc_O2=1.01, r_CO2_O2=10, TIT=1420, O2_purity=0.99, m_dot_fuel=7
     S11 = State('Compressed RSCCO2', 'CarbonDioxide')
     S11.m_dot = 580.85  # kg/s
     S11.T = 299.15  # K
-    S11.P = 7786259.9  # Pa
+    S11.P = S10.P*(1 - Perc_Delta_P_IC/100)  # Pa
     S11.y = [0.9989, 0.0011, 0, 0]  # y_CO2, y_H2O, y_O2, y_N2
     S.append(S11)
 
@@ -187,38 +194,38 @@ def build_cycle(exc_O2=1.01, r_CO2_O2=10, TIT=1420, O2_purity=0.99, m_dot_fuel=7
     S12 = State('RSCCO2 - Combustion', 'CarbonDioxide')
     S12.m_dot = 271.04  # kg/s
     S12.T = 299.15  # K
-    S12.P = 7786259.9  # Pa
+    S12.P = S11.P  # Pa
     S12.y = [0.9989, 0.0011, 0, 0]  # y_CO2, y_H2O, y_O2, y_N2
     S.append(S12)
 
-    # State 13 (RSCCO2 + O2 - Combustion)
-    S13 = State('RSCCO2 + O2 - Combustion', 'CarbonDioxide + Oxygen')
-    S13.m_dot = 299.58  # kg/s
-    S13.T = 299.15  # K
-    S13.P = 7786259.9  # Pa
-    S13.y = [0.8726, 0.0010, 0.1264, 0.0]  # y_CO2, y_H2O, y_O2, y_N2
+    # State 13 (RSCCO2 - Max. Pressure - Combustion)
+    S13 = State('RSCCO2 - Max. Pressure - Combustion', 'CarbonDioxide')
+    S13.m_dot = 271.04  # kg/s
+    S13.T = 329  # K
+    S13.P = P_max
+    S13.y = [0.9989, 0.0011, 0.0, 0.0]  # y_CO2, y_H2O, y_O2, y_N2
     S.append(S13)
 
-    MixerCO2_O2 = Mixer('CO2-O2 Mixer', S[12], S[2], S[13])
-    Component[MixerCO2_O2.Name] = MixerCO2_O2
+    Pump1 = Pump('CO2-Combustion Pump', eta_pump, P_max, S[12], S[13])
+    Pump1.T_iso = 327  # K
+    Component[Pump1.Name] = Pump1
 
     # State 14 (RSCCO2 + O2 - Max. Pressure - Combustion)
     S14 = State('RSCCO2 + O2 - Max. Pressure - Combustion', 'CarbonDioxide + Oxygen')
     S14.m_dot = 299.58  # kg/s
-    S14.T = 333.05  # K
-    S14.P = 29198474.6  # Pa
+    S14.T = 326.5  # K
+    S14.P = S2.P  # Pa
     S14.y = [0.8726, 0.0010, 0.1264, 0.0]  # y_CO2, y_H2O, y_O2, y_N2
     S.append(S14)
 
-    Pump1 = Pump('CO2-O2 Pump', eta_pump, P_max, S[13], S[14])
-    Pump1.T_iso = 332.88  # K
-    Component[Pump1.Name] = Pump1
+    MixerCO2_O2 = Mixer('CO2-O2 Mixer', S[13], S[2], S[14])
+    Component[MixerCO2_O2.Name] = MixerCO2_O2
 
     # State 15 (RSCCO2 + O2 - Oxidant)
     S15 = State('RSCCO2 + O2 - Oxidant', 'CarbonDioxide + Oxygen')
     S15.m_dot = 299.58  # kg/s
     S15.T = 867.54  # K
-    S15.P = 28906489.8  # Pa
+    S15.P = S14.P*(1 - PERC_DELTA_P_Recup/100)  # Pa
     S15.y = [0.8726, 0.0010, 0.1264, 0.0]  # y_CO2, y_H2O, y_O2, y_N2
     S.append(S15)
 
@@ -233,20 +240,20 @@ def build_cycle(exc_O2=1.01, r_CO2_O2=10, TIT=1420, O2_purity=0.99, m_dot_fuel=7
     # State 17 (RSCCO2 - Max. Pressure - Extra + TC)
     S17 = State('RSCCO2 - Max. Pressure - Extra + TC', 'CarbonDioxide')
     S17.m_dot = 289.66  # kg/s
-    S17.T = 326.9  # K
-    S17.P = 29198474.6  # Pa
+    S17.T = 329  # K
+    S17.P = P_max  # Pa
     S17.y = [0.9989, 0.0011, 0.0, 0.0]  # y_CO2, y_H2O, y_O2, y_N2
     S.append(S17)
 
     Pump2 = Pump('CO2-Extra+TC Pump', eta_pump, P_max, S[16], S[17])
-    Pump2.T_iso = 326.46  # K
+    Pump2.T_iso = 327  # K
     Component[Pump2.Name] = Pump2
 
     # State 18 (RSCCO2 - Extra)
     S18 = State('RSCCO2 - Extra', 'CarbonDioxide')
     S18.m_dot = 239.66  # kg/s
-    S18.T = 326.9  # K
-    S18.P = 29198474.6  # Pa
+    S18.T = S17.T  # K
+    S18.P = S17.P  # Pa
     S18.y = [0.9989, 0.0011, 0.0, 0.0]  # y_CO2, y_H2O, y_O2, y_N2
     S.append(S18)
 
@@ -254,15 +261,15 @@ def build_cycle(exc_O2=1.01, r_CO2_O2=10, TIT=1420, O2_purity=0.99, m_dot_fuel=7
     S19 = State('RSCCO2 - Extra - Heated', 'CarbonDioxide')
     S19.m_dot = 239.66  # kg/s
     S19.T = 972.54  # K
-    S19.P = 28906489.8  # Pa
+    S19.P = S18.P*(1 - PERC_DELTA_P_Recup/100)  # Pa
     S19.y = [0.9989, 0.0011, 0.0, 0.0]  # y_CO2, y_H2O, y_O2, y_N2
     S.append(S19)
 
     # State 20 (RSCCO2 - TC)
     S20 = State('RSCCO2 - TC', 'CarbonDioxide')
     S20.m_dot = 50  # kg/s
-    S20.T = 326.9  # K
-    S20.P = 29198474.6  # Pa
+    S20.T = S17.T  # K
+    S20.P = S17.P  # Pa
     S20.y = [0.9989, 0.0011, 0.0, 0.0]  # y_CO2, y_H2O, y_O2, y_N2
     S.append(S20)
 
@@ -273,7 +280,7 @@ def build_cycle(exc_O2=1.01, r_CO2_O2=10, TIT=1420, O2_purity=0.99, m_dot_fuel=7
     S21 = State('RSCCO2 - TC - Heated', 'CarbonDioxide')
     S21.m_dot = 50  # kg/s
     S21.T = 517.11  # K
-    S21.P = 28906489.8  # Pa
+    S21.P = S20.P*(1 - PERC_DELTA_P_Recup/100)  # Pa
     S21.y = [0.9989, 0.0011, 0, 0]  # y_CO2, y_H2O, y_O2, y_N2
     S.append(S21)
 
@@ -281,7 +288,7 @@ def build_cycle(exc_O2=1.01, r_CO2_O2=10, TIT=1420, O2_purity=0.99, m_dot_fuel=7
     S22 = State('Combustion Products', 'CarbonDioxide + Water')
     S22.m_dot = 306.98  # kg/s
     S22.T = 1707.5  # K
-    S22.P = 30000000.0  # Pa
+    S22.P = S15.P  # Pa
     S22.y = [0.8821, 0.1179, 0.0, 0.0]  # y_CO2, y_H2O, y_O2, y_N2
     S.append(S22)
 
@@ -293,7 +300,7 @@ def build_cycle(exc_O2=1.01, r_CO2_O2=10, TIT=1420, O2_purity=0.99, m_dot_fuel=7
     S23 = State('HP Turbine - Inlet', 'CarbonDioxide + Water')
     S23.m_dot = 546.63  # kg/s
     S23.T = 1400.0  # K
-    S23.P = 28906489.8  # Pa
+    S23.P = S22.P  # Pa
     S23.y = [0.9313, 0.0687, 0.0, 0.0]  # y_CO2, y_H2O, y_O2, y_N2
     S.append(S23)
 
@@ -317,7 +324,7 @@ def build_cycle(exc_O2=1.01, r_CO2_O2=10, TIT=1420, O2_purity=0.99, m_dot_fuel=7
     S25 = State('Coolant flow - HP Turbine', 'CarbonDioxide + Water')
     S25.m_dot = 25  # kg/s
     S25.T = 517.11  # K
-    S25.P = 28906489.8  # Pa
+    S25.P = S21.P  # Pa
     S25.y = [0.9989, 0.0011, 0.0, 0.0]  # y_CO2, y_H2O, y_O2, y_N2
     S.append(S25)
 
@@ -348,7 +355,7 @@ def build_cycle(exc_O2=1.01, r_CO2_O2=10, TIT=1420, O2_purity=0.99, m_dot_fuel=7
     S28 = State('Coolant flow - IP Turbine', 'CarbonDioxide + Water')
     S28.m_dot = 25  # kg/s
     S28.T = 517.11  # K
-    S28.P = 28906489.8  # Pa
+    S28.P = S21.P  # Pa
     S28.y = [0.9989, 0.0011, 0.0, 0.0]  # y_CO2, y_H2O, y_O2, y_N2
     S.append(S28)
 
@@ -383,7 +390,7 @@ def build_cycle(exc_O2=1.01, r_CO2_O2=10, TIT=1420, O2_purity=0.99, m_dot_fuel=7
     S31 = State('Flue gas 3 - Recuperator Outlet', 'CarbonDioxide + Water')
     S31.m_dot = 596.63  # kg/s
     S31.T = 353.05  # K
-    S31.P = 2970000.0  # Pa
+    S31.P = S30.P*(1 - PERC_DELTA_P_Recup/100)  # Pa
     S31.y = [0.9367, 0.0633, 0.0, 0.0]  # y_CO2, y_H2O, y_O2, y_N2
     S.append(S31)
 
@@ -395,7 +402,7 @@ def build_cycle(exc_O2=1.01, r_CO2_O2=10, TIT=1420, O2_purity=0.99, m_dot_fuel=7
     S32 = State('H2O Out', 'Water', spc=[utils.SPS['H2O']])
     S32.m_dot = 15.78  # kg/s
     S32.T = 299.15  # K
-    S32.P = 2955150.0  # Pa
+    S32.P = S31.P  # Pa
     S32.y = [1.0]
     S.append(S32)
 
@@ -406,15 +413,12 @@ def build_cycle(exc_O2=1.01, r_CO2_O2=10, TIT=1420, O2_purity=0.99, m_dot_fuel=7
     S33 = State('CO2 Out', 'CarbonDioxide')
     S33.m_dot = 24.49  # kg/s
     S33.T = 299.15  # K
-    S33.P = 7786259.9  # Pa
+    S33.P = S11.P  # Pa
     S33.y = [0.9989, 0.0011, 0.0, 0.0]  # y_CO2, y_H2O, y_O2, y_N2
     S.append(S33)
 
     Split_CO2 = Splitter_CO2_3way('CO2 3-way', m_CO2_comb, S[11], S[33], S[12], S[16])
     Component[Split_CO2.Name] = Split_CO2
-
-    S += asu['states']
-    Component.update(asu['components'])
 
     X0 = []
     for state in S:

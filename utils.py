@@ -24,16 +24,14 @@ h_ref_CO2 = PropsSI('H', 'P', P_ref, 'T', T_ref, 'CarbonDioxide')
 h_ref_H2O = PropsSI('H', 'P', P_ref, 'T', T_ref, 'Water')
 h_ref_O2  = PropsSI('H', 'P', P_ref, 'T', T_ref, 'Oxygen')
 h_ref_N2  = PropsSI('H', 'P', P_ref, 'T', T_ref, 'Nitrogen')
+h_ref_CH4  = PropsSI('H', 'P', P_ref, 'T', T_ref, 'Methane')
+h_ref_C2H6 = PropsSI('H', 'P', P_ref, 'T', T_ref, 'Ethane')
+h_ref_C3H8 = PropsSI('H', 'P', P_ref, 'T', T_ref, 'Propane')
 
 s_ref_CO2 = PropsSI('S', 'P', P_ref, 'T', T_ref, 'CarbonDioxide')
 s_ref_H2O = PropsSI('S', 'P', P_ref, 'T', T_ref, 'Water')
 s_ref_O2  = PropsSI('S', 'P', P_ref, 'T', T_ref, 'Oxygen')
 s_ref_N2  = PropsSI('S', 'P', P_ref, 'T', T_ref, 'Nitrogen')
-
-h_ref_CH4  = PropsSI('H', 'P', P_ref, 'T', T_ref, 'Methane')
-h_ref_C2H6 = PropsSI('H', 'P', P_ref, 'T', T_ref, 'Ethane')
-h_ref_C3H8 = PropsSI('H', 'P', P_ref, 'T', T_ref, 'Propane')
-
 s_ref_CH4  = PropsSI('S', 'P', P_ref, 'T', T_ref, 'Methane')
 s_ref_C2H6 = PropsSI('S', 'P', P_ref, 'T', T_ref, 'Ethane')
 s_ref_C3H8 = PropsSI('S', 'P', P_ref, 'T', T_ref, 'Propane')
@@ -47,25 +45,54 @@ h_form_H2O  = -285830/MW_H2O
 h_form_O2   = 0
 h_form_N2   = 0
 
+Tc_CO2 = PropsSI('Tcrit', 'PR::CarbonDioxide')
+Tc_H2O = PropsSI('Tcrit', 'PR::Water')
+Tc_O2  = PropsSI('Tcrit', 'PR::Oxygen')
+Tc_N2  = PropsSI('Tcrit', 'PR::Nitrogen')
+Tc_CH4 = PropsSI('Tcrit', 'PR::Methane')
+Tc_C2H6 = PropsSI('Tcrit', 'PR::Ethane')
+Tc_C3H8 = PropsSI('Tcrit', 'PR::Propane')
+
+Pc_CO2 = PropsSI('Pcrit', 'PR::CarbonDioxide')
+Pc_H2O = PropsSI('Pcrit', 'PR::Water')
+Pc_O2  = PropsSI('Pcrit', 'PR::Oxygen')
+Pc_N2  = PropsSI('Pcrit', 'PR::Nitrogen')
+Pc_CH4 = PropsSI('Pcrit', 'PR::Methane')
+Pc_C2H6 = PropsSI('Pcrit', 'PR::Ethane')
+Pc_C3H8 = PropsSI('Pcrit', 'PR::Propane')
+
+omega_CO2 = PropsSI('acentric', 'CarbonDioxide')
+omega_H2O = PropsSI('acentric', 'Water')
+omega_O2  = PropsSI('acentric', 'Oxygen')
+omega_N2  = PropsSI('acentric', 'Nitrogen')
+omega_CH4 = PropsSI('acentric', 'Methane')
+omega_C2H6 = PropsSI('acentric', 'Ethane')
+omega_C3H8 = PropsSI('acentric', 'Propane')
+
 class Species:
-    def __init__(self, name, fluid, MW, h_ref, h_form, s_ref, n_C=0, n_H=0):
+    def __init__(self, name, fluid, MW, h_ref, h_form, s_ref, Tc, Pc, omega, n_C=0, n_H=0):
         self.name = name
         self.fluid = fluid
         self.MW = MW
         self.h_ref = h_ref
         self.h_form = h_form
         self.s_ref = s_ref
+
+        self.Tc = Tc
+        self.Pc = Pc
+        self.omega = omega
+
         self.n_C = n_C
         self.n_H = n_H
 
 SPS = {
-    'CO2':  Species('CO2',  'CarbonDioxide', MW_CO2,  h_ref_CO2,  h_form_CO2,  s_ref_CO2),
-    'H2O':  Species('H2O',  'Water',         MW_H2O,  h_ref_H2O,  h_form_H2O,  s_ref_H2O),
-    'O2':   Species('O2',   'Oxygen',        MW_O2,   h_ref_O2,   h_form_O2,   s_ref_O2),
-    'N2':   Species('N2',   'Nitrogen',      MW_N2,   h_ref_N2,   h_form_N2,   s_ref_N2),
-    'CH4':  Species('CH4',  'Methane',       MW_CH4,  h_ref_CH4,  h_form_CH4,  s_ref_CH4, n_C=1, n_H=4),
-    'C2H6': Species('C2H6', 'Ethane',        MW_C2H6, h_ref_C2H6, h_form_C2H6, s_ref_C2H6, n_C=2, n_H=6),
-    'C3H8': Species('C3H8', 'Propane',       MW_C3H8, h_ref_C3H8, h_form_C3H8, s_ref_C3H8, n_C=3, n_H=8),
+    'CO2':  Species('CO2',  'CarbonDioxide', MW_CO2,  h_ref_CO2,  h_form_CO2,  s_ref_CO2,  Tc_CO2,  Pc_CO2,  omega_CO2),
+    'H2O':  Species('H2O',  'Water',         MW_H2O,  h_ref_H2O,  h_form_H2O,  s_ref_H2O,  Tc_H2O,  Pc_H2O,  omega_H2O),
+    'O2':   Species('O2',   'Oxygen',        MW_O2,   h_ref_O2,   h_form_O2,   s_ref_O2,   Tc_O2,   Pc_O2,   omega_O2),
+    'N2':   Species('N2',   'Nitrogen',      MW_N2,   h_ref_N2,   h_form_N2,   s_ref_N2,   Tc_N2,   Pc_N2,   omega_N2),
+    'CH4':  Species('CH4',  'Methane',       MW_CH4,  h_ref_CH4,  h_form_CH4,  s_ref_CH4,  Tc_CH4,  Pc_CH4,  omega_CH4,  n_C=1, n_H=4),
+    'C2H6': Species('C2H6', 'Ethane',        MW_C2H6, h_ref_C2H6, h_form_C2H6, s_ref_C2H6, Tc_C2H6, Pc_C2H6, omega_C2H6, n_C=2, n_H=6),
+    'C3H8': Species('C3H8', 'Propane',       MW_C3H8, h_ref_C3H8, h_form_C3H8, s_ref_C3H8, Tc_C3H8, Pc_C3H8, omega_C3H8, n_C=3, n_H=8),
 }
 
 PRODUCT_SPECIES = [SPS['CO2'], SPS['H2O'], SPS['O2'], SPS['N2']]
@@ -101,28 +128,6 @@ def mass_fraction(y, species):
 
     return MW_mix, x
 
-def mixture_enthalpy(T, P, y, species):
-    MW, x = mass_fraction(y, species)
-    pairs = list(zip(x, species))
-    h = 0
-    for (xi, sp) in pairs:
-        h += xi*(PropsSI('H', 'P', P, 'T', T, sp.fluid) - sp.h_ref + sp.h_form)
-
-    return h
-
-def mixture_entropy(T, P, y, species):
-    MW, x = mass_fraction(y, species)
-    pairs = list(zip(x, species))
-
-    t = sum(ylny(yi) for yi in y)
-    s_mix = (-R*t)/MW
-
-    s = s_mix
-    for (xi, sp) in pairs:
-        s += xi*(PropsSI('S', 'P', P, 'T', T, sp.fluid) - sp.s_ref)
-
-    return s
-
 def stoichiometry(S_fuel):
     MW_fuel, x_fuel = mass_fraction(S_fuel.y, S_fuel.spc)
     n_fuel = S_fuel.m_dot/MW_fuel
@@ -150,20 +155,18 @@ def fuel_requirements(S_fuel):
 
     return m_CO2_add, m_H2O_add, m_O2_sto
 
-def asu_eta_poor(p, multiplier=1.0):
-    # Quadratic fit
-    a, b, c = 39.86, -81.90, 42.23
-    eta = multiplier*(a*(p**2) + b*p + c)
-    return eta
+def asu_work(p, work_95=720e3):
+    """Cryogenic-ASU specific work in J/kg_O2 for oxygen mole fraction p."""
+    purity = 100*p
 
-def asu_eta_optimized(p, multiplier=1.0):
-    # Quadratic fit
-    a, b, c = -265.88, 501.05, -235.02
-    eta = multiplier*(a*(p**2) + b*p + c)
-    return eta
+    # CMU/IECM piecewise purity correction, normalized to 95 mol% O2.
+    if purity <= 97.5:
+        work_multiplier = (
+            3.0e-5*purity**2 + 1.7e-3*purity + 0.5923
+        )/1.02455
+    else:
+        work_multiplier = (
+            -0.0457*purity**2 + 9.1372*purity - 455.82
+        )/0.62318
 
-def asu_eta_power(p, multiplier=1.0):
-    # Power law fit: a*(1-p)^b (best one yet)
-    a, b = 5.2850780001, 0.5331592553
-    eta = multiplier*a*((1 - p)**b)
-    return eta
+    return work_95*work_multiplier

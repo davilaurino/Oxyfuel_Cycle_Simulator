@@ -13,7 +13,6 @@ T_lox = 85      # K  (LOX temperature)
 P_lox = 1.25e5   # Pa (LOX pressure — slightly above atmospheric for pumping)
 
 T_O2_out  = 295     # K  (O2 delivery temperature)
-P_O2_out  = 8e6     # Pa (O2 delivery pressure — internal compression inside cold box)
 
 P_MAC        = 6e5   # Pa (MAC outlet pressure)
 eta_air_comp = 0.88
@@ -23,15 +22,15 @@ pr_air_comp  = (P_MAC/P_atm)**(1/n_air_comp)
 eta_lox_pump = 0.88
 
 T_resf = 300   # K
-PERC_DELTAP_IC = 0.2   # %
-PERC_DELTAP_MHX = 1.0  # %
+PERC_DELTAP_IC = 0.1   # %
+PERC_DELTAP_MHX = 0.5  # %
 
-T_pinch_O2 = 2.0  # K, pinch for O2 in MHX
-T_pinch_N2 = 5.0  # K, pinch for N2 in MHX
+T_pinch_O2 = 20  # K, pinch for O2 in MHX
+T_pinch_N2 = 40  # K, pinch for N2 in MHX
 
 asu_multiplier = 1
 
-def setup_asu(O2_purity, y_O2_waste, eta_coldbox=None):
+def setup_asu(O2_purity, y_O2_waste, P_O2_pump_out, eta_coldbox=0.5):
 
     if eta_coldbox is None:
         eta_coldbox = utils.asu_eta_poor(O2_purity, asu_multiplier)
@@ -133,8 +132,8 @@ def setup_asu(O2_purity, y_O2_waste, eta_coldbox=None):
     # O2 Cold
     S8_ASU = State('ASU O2 Cold', 'Oxygen', spc=utils.AIR_SPECIES)
     S8_ASU.m_dot = 28.53
-    S8_ASU.T = T_O2_out
-    S8_ASU.P = P_O2_out
+    S8_ASU.T = T_lox
+    S8_ASU.P = P_lox
     S8_ASU.y = [0.99, 0.01]
     S_asu.append(S8_ASU)
 
@@ -143,19 +142,19 @@ def setup_asu(O2_purity, y_O2_waste, eta_coldbox=None):
     S9_ASU.m_dot = 79.0
     S9_ASU.T = T_N2_out
     S9_ASU.P = P_N2_out
-    S9_ASU.y = [0.99, 0.01]
+    S9_ASU.y = [0.01, 0.99]
     S_asu.append(S9_ASU)
 
     # Pessurized cold O2
     S10_ASU = State('ASU O2 Pressurized', 'Oxygen', spc=utils.AIR_SPECIES)
     S10_ASU.m_dot = 28.53
-    S10_ASU.T = T_lox
-    S10_ASU.P = P_lox
+    S10_ASU.T = 93
+    S10_ASU.P = P_O2_pump_out
     S10_ASU.y = [0.99, 0.01]
     S_asu.append(S10_ASU)
 
-    LOX_pump = Pump('LOX Pump', eta_lox_pump, P_O2_out, S8_ASU, S10_ASU)
-    LOX_pump.T_iso = 100
+    LOX_pump = Pump('LOX Pump', eta_lox_pump, P_O2_pump_out, S8_ASU, S10_ASU)
+    LOX_pump.T_iso = 91
     C_asu[LOX_pump.Name] = LOX_pump
 
     ColdBox = ColdBox_ASU('ASU Cold Box', S7_ASU, S8_ASU, S9_ASU,
@@ -166,7 +165,7 @@ def setup_asu(O2_purity, y_O2_waste, eta_coldbox=None):
     S11_ASU = State('O2 Delivery', 'Oxygen', spc=utils.AIR_SPECIES)
     S11_ASU.m_dot = 28.53
     S11_ASU.T = T_O2_out
-    S11_ASU.P = P_O2_out
+    S11_ASU.P = P_O2_pump_out*(1 - PERC_DELTAP_MHX/100)
     S11_ASU.y = [0.99, 0.01]
 
     # N2 Vent
@@ -174,7 +173,7 @@ def setup_asu(O2_purity, y_O2_waste, eta_coldbox=None):
     S12_ASU.m_dot = 79.0
     S12_ASU.T = T_N2_out
     S12_ASU.P = P_N2_out
-    S12_ASU.y = [0.99, 0.01]
+    S12_ASU.y = [0.01, 0.99]
     S_asu.append(S12_ASU)
 
     MHX = MHX_ASU('ASU MHX', PERC_DELTAP_MHX, T_pinch_O2, T_pinch_N2,

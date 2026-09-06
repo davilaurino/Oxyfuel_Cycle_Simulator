@@ -1,5 +1,6 @@
 import numpy as np
 import utils
+import thermo
 
 # Scaling factors for residuals
 H_mult = 1e-7
@@ -11,15 +12,20 @@ P_mult = 1e-4
 y_mult = 1e1
 
 class State:
-    def __init__(self, Stream, Fluid, m_dot=None, T=None, P=None, v=None, h=None, s=None, y=None, spc=None):
+    def __init__(self, Stream, Fluid, m_dot=None, T=None, P=None, rho=None, h=None, s=None, y=None, spc=None):
         self.Stream = Stream
         self.Fluid = Fluid
+        self.phase = None
+        self.Tc_mix = None
+        self.Pc_mix = None
         self.m_dot = m_dot
         self.T = T
         self.P = P
-        self.v = v
+        self.rho = rho
         self.h = h
         self.s = s
+        self.h_heos = None
+        self.s_heos = None
         self.y = y
         if spc is not None:
             self.spc = list(spc)
@@ -39,19 +45,26 @@ class State:
         return start_idx + 3 + n
 
     def to_dict(self):
-        self.h = utils.mixture_enthalpy(self.T, self.P, self.y, self.spc)
-        self.s = utils.mixture_entropy(self.T, self.P, self.y, self.spc)
-        if any((spc is utils.SPS['CO2']) for spc in self.spc):
-            self.v = utils.CO2_volume(self.T, self.P)
-        else:
-            self.v = 0
+        self.h = thermo.mixture_enthalpy(self.T, self.P, self.y, self.spc)
+        self.s = thermo.mixture_entropy(self.T, self.P, self.y, self.spc)
+        self.phase, self.Tc_mix, self.Pc_mix, self.rho = thermo.mixture_phase(
+            self.T, self.P, self.y, self.spc
+        )
+        self.h_heos, self.s_heos = thermo.heos_mixture_properties(
+            self.T, self.P, self.y, self.spc, self.phase
+        )
 
         d = {
             "Stream": self.Stream,
             "T": round(self.T, 2),
-            "P": round(self.P, 1),
-            "v (CO2)": round(self.v, 4),
+            "P (MPa)": round(self.P/1e6, 2),
+            "Mixture phase": self.phase,
+            "Tc_mix (K)": round(self.Tc_mix, 2),
+            "Pc_mix (MPa)": round(self.Pc_mix/1e6, 2),
+            "rho_mix (kg/m3)": round(self.rho, 2),
             "m_dot": round(self.m_dot, 2),
+            "Delta h model-HEOS (J/kg)": round(self.h - self.h_heos, 2),
+            "Delta s model-HEOS (J/kg K)": round(self.s - self.s_heos, 4),
         }
 
         spc_dict = {spc: yi for spc, yi in zip(self.spc, self.y)}
@@ -117,9 +130,9 @@ class Compressor:
         for i in range(len(S_in.y)):
             eqs.append((S_out.y[i] - S_in.y[i])*y_mult)
 
-        s_in = utils.mixture_entropy(S_in.T, S_in.P, S_in.y, S_in.spc)
-        s_iso = utils.mixture_entropy(self.T_iso, P_out, S_out.y, S_out.spc)
-        h_iso = utils.mixture_enthalpy(self.T_iso, P_out, S_out.y, S_out.spc)
+        s_in = thermo.mixture_entropy(S_in.T, S_in.P, S_in.y, S_in.spc)
+        s_iso = thermo.mixture_entropy(self.T_iso, P_out, S_out.y, S_out.spc)
+        h_iso = thermo.mixture_enthalpy(self.T_iso, P_out, S_out.y, S_out.spc)
 
         eqs.append((S_out.P - P_out)*P_mult)
         eqs.append((s_iso - s_in)*s_mult)
@@ -157,9 +170,9 @@ class Pump:
         for i in range(len(S_in.y)):
             eqs.append((S_out.y[i] - S_in.y[i])*y_mult)
 
-        s_in  = utils.mixture_entropy(S_in.T, S_in.P, S_in.y, S_in.spc)
-        s_iso = utils.mixture_entropy(self.T_iso, P_out, S_out.y, S_out.spc)
-        h_iso = utils.mixture_enthalpy(self.T_iso, P_out, S_out.y, S_out.spc)
+        s_in  = thermo.mixture_entropy(S_in.T, S_in.P, S_in.y, S_in.spc)
+        s_iso = thermo.mixture_entropy(self.T_iso, P_out, S_out.y, S_out.spc)
+        h_iso = thermo.mixture_enthalpy(self.T_iso, P_out, S_out.y, S_out.spc)
 
         eqs.append((S_out.P - P_out)*P_mult)
         eqs.append((s_iso - s_in)*s_mult)
@@ -416,9 +429,9 @@ class Turbine:
         for i in range(len(S_in.y)):
             eqs.append((S_out.y[i] - S_in.y[i])*y_mult)
 
-        s_in = utils.mixture_entropy(S_in.T, S_in.P, S_in.y, S_in.spc)
-        s_iso = utils.mixture_entropy(self.T_iso, self.P_out, S_out.y, S_out.spc)
-        h_iso = utils.mixture_enthalpy(self.T_iso, self.P_out, S_out.y, S_out.spc)
+        s_in = thermo.mixture_entropy(S_in.T, S_in.P, S_in.y, S_in.spc)
+        s_iso = thermo.mixture_entropy(self.T_iso, self.P_out, S_out.y, S_out.spc)
+        h_iso = thermo.mixture_enthalpy(self.T_iso, self.P_out, S_out.y, S_out.spc)
 
         eqs.append((S_out.P - self.P_out)*P_mult)
         eqs.append((s_iso - s_in)*s_mult)
@@ -744,9 +757,9 @@ class ColdBox_ASU:
         _, x_O2 = utils.mass_fraction(S_O2.y, S_O2.spc)
         m_dot_O2_pure = S_O2.m_dot*x_O2[0]
 
-        s_air = utils.mixture_entropy(S_air.T, S_air.P, S_air.y, S_air.spc)
-        s_O2  = utils.mixture_entropy(S_O2.T,  S_O2.P,  S_O2.y,  S_O2.spc)
-        s_N2  = utils.mixture_entropy(S_N2.T,  S_N2.P,  S_N2.y,  S_N2.spc)
+        s_air = thermo.mixture_entropy(S_air.T, S_air.P, S_air.y, S_air.spc)
+        s_O2  = thermo.mixture_entropy(S_O2.T,  S_O2.P,  S_O2.y,  S_O2.spc)
+        s_N2  = thermo.mixture_entropy(S_N2.T,  S_N2.P,  S_N2.y,  S_N2.spc)
 
         B_air = utils.flow_exergy(S_air.m_dot, S_air.h, s_air)
         B_O2  = utils.flow_exergy(S_O2.m_dot,  S_O2.h,  s_O2)
@@ -827,9 +840,9 @@ class GrayBox_ASU:
         eqs.append((S_N2.P - self.P_N2_out)*P_mult) # exhaust P
 
         # --- Separation work: Gibbs minimum (outlet exergy - inlet exergy) / eta_sep ---
-        s_air = utils.mixture_entropy(S_air.T, S_air.P, S_air.y, S_air.spc)
-        s_O2  = utils.mixture_entropy(S_O2.T,  S_O2.P,  S_O2.y,  S_O2.spc)
-        s_N2  = utils.mixture_entropy(S_N2.T,  S_N2.P,  S_N2.y,  S_N2.spc)
+        s_air = thermo.mixture_entropy(S_air.T, S_air.P, S_air.y, S_air.spc)
+        s_O2  = thermo.mixture_entropy(S_O2.T,  S_O2.P,  S_O2.y,  S_O2.spc)
+        s_N2  = thermo.mixture_entropy(S_N2.T,  S_N2.P,  S_N2.y,  S_N2.spc)
 
         B_air = utils.flow_exergy(S_air.m_dot, S_air.h, s_air)
         B_O2  = utils.flow_exergy(S_O2.m_dot,  S_O2.h,  s_O2)

@@ -1,0 +1,35 @@
+,Stream,T,P (MPa),Mixture phase,Tc_mix (K),Pc_mix (MPa),rho_mix (kg/m3),m_dot,y_CO2,y_H2O,y_O2,y_N2,y_CH4,y_C2H6,y_C3H8
+Fuel Compressor 1 - Inlet,Fuel Compressor 1 - Inlet,298.15,0.7,gas,205.85,5.81,4.96,7.4,0.01,0.0,0.0,0.0,0.94,0.03,0.02
+Compressed Fuel - Combustor Inlet,Compressed Fuel - Combustor Inlet,658.22,30.0,supercritical gas-like,205.85,5.81,86.39,7.4,0.01,0.0,0.0,0.0,0.94,0.03,0.02
+O2 Input,O2 Input,295.0,30.0,supercritical gas-like,154.34,5.04,397.11,28.81,0.0,0.0,0.99,0.01,0.0,0.0,0.0
+Compressor 1 - Inlet,Compressor 1 - Inlet,300.0,2.98,gas,303.11,7.75,62.11,472.34,0.978,0.0012,0.0015,0.0193,0.0,0.0,0.0
+Intercooler 1 - Inlet,Intercooler 1 - Inlet,319.98,3.81,gas,303.11,7.75,74.66,472.34,0.978,0.0012,0.0015,0.0193,0.0,0.0,0.0
+Compressor 2 - Inlet,Compressor 2 - Inlet,300.0,3.81,gas,303.11,7.75,84.6,472.34,0.978,0.0012,0.0015,0.0193,0.0,0.0,0.0
+Intercooler 2 - Inlet,Intercooler 2 - Inlet,320.01,4.87,gas,303.11,7.75,101.62,472.34,0.978,0.0012,0.0015,0.0193,0.0,0.0,0.0
+Compressor 3 - Inlet,Compressor 3 - Inlet,300.0,4.86,gas,303.11,7.75,119.72,472.34,0.978,0.0012,0.0015,0.0193,0.0,0.0,0.0
+Intercooler 3 - Inlet,Intercooler 3 - Inlet,319.79,6.22,gas,303.11,7.75,143.51,472.34,0.978,0.0012,0.0015,0.0193,0.0,0.0,0.0
+Compressor 4 - Inlet,Compressor 4 - Inlet,300.0,6.21,gas,303.11,7.75,187.2,472.34,0.978,0.0012,0.0015,0.0193,0.0,0.0,0.0
+Intercooler 4 - Inlet,Intercooler 4 - Inlet,318.43,7.94,supercritical gas-like,303.11,7.75,223.07,472.34,0.978,0.0012,0.0015,0.0193,0.0,0.0,0.0
+Compressed RSCCO2,Compressed RSCCO2,300.0,7.93,liquid,303.11,7.75,677.39,472.34,0.978,0.0012,0.0015,0.0193,0.0,0.0,0.0
+RSCCO2 - Combustion,RSCCO2 - Combustion,300.0,7.93,liquid,303.11,7.75,677.39,231.49,0.978,0.0012,0.0015,0.0193,0.0,0.0,0.0
+RSCCO2 - Max. Pressure - Combustion,RSCCO2 - Max. Pressure - Combustion,336.23,30.0,supercritical liquid-like,303.11,7.75,797.17,231.49,0.978,0.0012,0.0015,0.0193,0.0,0.0,0.0
+RSCCO2 + O2 - Max. Pressure - Combustion,RSCCO2 + O2 - Max. Pressure - Combustion,322.22,30.0,supercritical liquid-like,295.23,10.11,747.14,260.29,0.8359,0.001,0.1451,0.0179,0.0,0.0,0.0
+RSCCO2 + O2 - Oxidant,RSCCO2 + O2 - Oxidant,694.07,29.85,supercritical gas-like,295.23,10.11,206.7,260.29,0.8359,0.001,0.1451,0.0179,0.0,0.0,0.0
+RSCCO2 - Extra + TC,RSCCO2 - Extra + TC,300.0,7.93,liquid,303.11,7.75,677.39,220.43,0.978,0.0012,0.0015,0.0193,0.0,0.0,0.0
+RSCCO2 - Max. Pressure - Extra + TC,RSCCO2 - Max. Pressure - Extra + TC,336.23,30.0,supercritical liquid-like,303.11,7.75,797.17,220.43,0.978,0.0012,0.0015,0.0193,0.0,0.0,0.0
+RSCCO2 - Extra,RSCCO2 - Extra,336.23,30.0,supercritical liquid-like,303.11,7.75,797.17,204.44,0.978,0.0012,0.0015,0.0193,0.0,0.0,0.0
+RSCCO2 - Extra - Heated,RSCCO2 - Extra - Heated,971.12,29.85,supercritical gas-like,303.11,7.75,150.62,204.44,0.978,0.0012,0.0015,0.0193,0.0,0.0,0.0
+RSCCO2 - TC,RSCCO2 - TC,336.23,30.0,supercritical liquid-like,303.11,7.75,797.17,16.0,0.978,0.0012,0.0015,0.0193,0.0,0.0,0.0
+RSCCO2 - TC - Heated,RSCCO2 - TC - Heated,473.0,29.85,supercritical gas-like,303.11,7.75,380.77,16.0,0.978,0.0012,0.0015,0.0193,0.0,0.0,0.0
+Combustion Products,Combustion Products,1666.83,29.85,gas,,,81.92,267.69,0.8491,0.1328,0.0013,0.0167,0.0,0.0,0.0
+HP Turbine - Inlet,HP Turbine - Inlet,1380.0,29.85,gas,,,101.59,472.13,0.9024,0.0784,0.0014,0.0178,0.0,0.0,0.0
+HP Turbine - Outlet,HP Turbine - Outlet,1240.37,13.92,gas,,,54.58,472.13,0.9024,0.0784,0.0014,0.0178,0.0,0.0,0.0
+Coolant flow - HP Turbine,Coolant flow - HP Turbine,473.0,29.85,supercritical gas-like,303.11,7.75,380.77,11.38,0.978,0.0012,0.0015,0.0193,0.0,0.0,0.0
+IP Turbine - Inlet,IP Turbine - Inlet,1222.9,13.92,gas,,,55.42,483.51,0.9041,0.0767,0.0014,0.0178,0.0,0.0,0.0
+IP Turbine - Outlet,IP Turbine - Outlet,1096.57,6.46,gas,,,29.18,483.51,0.9041,0.0767,0.0014,0.0178,0.0,0.0,0.0
+Coolant flow - IP Turbine,Coolant flow - IP Turbine,473.0,29.85,supercritical gas-like,303.11,7.75,380.77,4.61,0.978,0.0012,0.0015,0.0193,0.0,0.0,0.0
+LP Turbine - Inlet,LP Turbine - Inlet,1090.69,6.46,gas,,,29.35,488.12,0.9047,0.076,0.0014,0.0178,0.0,0.0,0.0
+LP Turbine - Outlet,LP Turbine - Outlet,976.12,3.0,gas,,,15.34,488.12,0.9047,0.076,0.0014,0.0178,0.0,0.0,0.0
+Flue gas 3 - Recuperator Outlet,Flue gas 3 - Recuperator Outlet,400.0,2.98,gas,,,39.78,488.12,0.9047,0.076,0.0014,0.0178,0.0,0.0,0.0
+H2O Out,H2O Out,300.0,2.98,liquid,647.1,22.06,997.85,15.78,0.0,1.0,0.0,0.0,0.0,0.0,0.0
+CO2 Out,CO2 Out,300.0,7.93,liquid,303.11,7.75,677.39,20.42,0.978,0.0012,0.0015,0.0193,0.0,0.0,0.0
