@@ -1,6 +1,6 @@
 import numpy as np
-import utils
-import thermo
+import utils as utils
+import thermo as thermo
 
 # Scaling factors for residuals
 H_mult = 1e-7
@@ -12,7 +12,8 @@ P_mult = 1e-4
 y_mult = 1e1
 
 class State:
-    def __init__(self, Stream, Fluid, m_dot=None, T=None, P=None, rho=None, h=None, s=None, y=None, spc=None):
+    def __init__(self, Stream, Fluid, m_dot=None, T=None, P=None, rho=None, h=None, s=None, 
+                 y=None, spc=None):
         self.Stream = Stream
         self.Fluid = Fluid
         self.phase = None

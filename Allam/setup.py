@@ -1,10 +1,10 @@
-import utils
+import utils as utils
 from classes import State, Input, Compressor, Pump, Intercooler, Combustor, Mixer, Turbine
 from classes import Splitter, HX_mult, Condensator, Splitter_CO2_3way, CoolantSplitter
 
 P_in  = 3e6  # Pa
 P_out = 8e6  # Pa
-P_max = 3e7  # Pa (max cycle pressure)
+P_max = 4e7  # Pa (max cycle pressure)
 
 eta_pump = 0.88
 
@@ -44,7 +44,7 @@ T_blade = 1120  # K — blade metal temperature limit
 
 T_cool = 473  # K — coolant temperature
 
-def build_cycle(exc_O2=1.01, r_CO2_O2=10, TIT=1450, O2_purity=0.99,
+def build_cycle(exc_O2=1.01, r_CO2_O2=10, TIT=1500, O2_purity=0.99,
                 m_dot_fuel=7.4, T_O2=295, P_O2=P_max):
     
     S = []

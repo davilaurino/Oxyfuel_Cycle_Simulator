@@ -127,6 +127,60 @@ def heos_mixture_properties(T, P, y, species, phase):
 
     return h, s
 
+def calculate_pr_parameters(T, P, y, species):
+    """Return pure-component and mixture parameters for the PR equation."""
+    y = np.asarray(y, dtype=float)
+    if len(y) != len(species):
+        raise ValueError("Composition and species must have the same length")
+    if np.any(y < 0) or y.sum() <= 0:
+        raise ValueError("Composition must be nonnegative and have a positive sum")
+    y = y/y.sum()
+
+    a = np.empty(len(species))
+    b = np.empty(len(species))
+    da_dT = np.empty(len(species))
+
+    for i, sp in enumerate(species):
+        kappa = 0.37464 + 1.54226*sp.omega - 0.26992*sp.omega**2
+        alpha_base = 1 + kappa*(1 - sqrt(T/sp.Tc))
+        a_constant = PR_A*R**2*sp.Tc**2/sp.Pc
+
+        a[i] = a_constant*alpha_base**2
+        b[i] = PR_B*R*sp.Tc/sp.Pc
+        da_dT[i] = -a_constant*kappa*alpha_base/sqrt(T*sp.Tc)
+
+    aij = np.empty((len(species), len(species)))
+    daij_dT = np.empty_like(aij)
+    for i, sp_i in enumerate(species):
+        for j, sp_j in enumerate(species):
+            kij = KIJ.get(frozenset((sp_i.name, sp_j.name)), 0)
+            aij[i, j] = (1 - kij)*sqrt(a[i]*a[j])
+            daij_dT[i, j] = aij[i, j]*(
+                da_dT[i]/a[i] + da_dT[j]/a[j]
+            )/2
+
+    a_mix = 0
+    b_mix = 0
+    da_mix_dT = 0
+    for i in range(len(species)):
+        b_mix += y[i]*b[i]
+        for j in range(len(species)):
+            a_mix += y[i]*y[j]*aij[i, j]
+            da_mix_dT += y[i]*y[j]*daij_dT[i, j]
+
+    return {
+        'y': y,
+        'a': a,
+        'b': b,
+        'da_dT': da_dT,
+        'aij': aij,
+        'a_mix': a_mix,
+        'b_mix': b_mix,
+        'da_mix_dT': da_mix_dT,
+        'A': a_mix*P/(R**2*T**2),
+        'B': b_mix*P/(R*T),
+    }
+
 def solve_pr_cubic(A, B):
     coefficients = [
         1,
@@ -145,55 +199,44 @@ def solve_pr_cubic(A, B):
     if len(valid_roots) == 0:
         raise ValueError("No physical root found for the PR cubic")
 
+    valid_roots.sort()
     if len(valid_roots) == 1:
-        return valid_roots[0]
+        return (valid_roots[0],)
+
+    # The middle root is mechanically unstable. Only the liquid-like minimum
+    # and vapor-like maximum roots are useful for phase calculations.
+    return valid_roots[0], valid_roots[-1]
+
+def select_stable_pr_root(A, B, roots):
+    """Select the physical PR root with the lowest residual Gibbs energy."""
+    if len(roots) == 1:
+        return roots[0]
 
     residual_gibbs = []
-    for Z in valid_roots:
-        log_ratio = log((Z + (1 + sqrt(2))*B)/(Z + (1 - sqrt(2))*B))
-        residual_gibbs.append(Z - 1 - log(Z - B) - A*log_ratio/(2*sqrt(2)*B))
+    for Z in roots:
+        log_ratio = log(
+            (Z + (1 + sqrt(2))*B)/(Z + (1 - sqrt(2))*B)
+        )
+        residual_gibbs.append(
+            Z - 1 - log(Z - B)
+            - A*log_ratio/(2*sqrt(2)*B)
+        )
 
-    Z = valid_roots[residual_gibbs.index(min(residual_gibbs))]
-    
-    return Z
+    return roots[residual_gibbs.index(min(residual_gibbs))]
 
 def calculate_pr_excess(T, P, y, species):
     """Calculate PR excess enthalpy and entropy in J/kg and J/(kg K)."""
-    y_total = sum(y)
-    y = [yi/y_total for yi in y]
-
-    a = []
-    b = []
-    da_dT = []
-
-    for sp in species:
-        kappa = 0.37464 + 1.54226*sp.omega - 0.26992*sp.omega**2
-        alpha_base = 1 + kappa*(1 - sqrt(T/sp.Tc))
-        alpha = alpha_base**2
-        a_constant = PR_A*R**2*sp.Tc**2/sp.Pc
-
-        a.append(a_constant*alpha)
-        b.append(PR_B*R*sp.Tc/sp.Pc)
-        da_dT.append(-a_constant*kappa*alpha_base/sqrt(T*sp.Tc))
-
-    a_mix = 0
-    da_mix_dT = 0
-    for i, sp_i in enumerate(species):
-        for j, sp_j in enumerate(species):
-            kij = KIJ.get(frozenset((sp_i.name, sp_j.name)), 0)
-            aij = (1 - kij)*sqrt(a[i]*a[j])
-            a_mix += y[i]*y[j]*aij
-
-            daij_dT = aij*(da_dT[i]/a[i] + da_dT[j]/a[j])/2
-            da_mix_dT += y[i]*y[j]*daij_dT
-
-    b_mix = 0
-    for i, sp_i in enumerate(species):
-        b_mix += y[i]*b[i]
-
-    A = a_mix*P/(R**2*T**2)
-    B = b_mix*P/(R*T)
-    Z_mix = solve_pr_cubic(A, B)
+    pr = calculate_pr_parameters(T, P, y, species)
+    y = pr['y']
+    a = pr['a']
+    b = pr['b']
+    da_dT = pr['da_dT']
+    a_mix = pr['a_mix']
+    b_mix = pr['b_mix']
+    da_mix_dT = pr['da_mix_dT']
+    A = pr['A']
+    B = pr['B']
+    Z_mix = select_stable_pr_root(A, B, solve_pr_cubic(A, B))
 
     B_pure = []
     Z_pure = []
@@ -202,7 +245,7 @@ def calculate_pr_excess(T, P, y, species):
     for i in range(len(species)):
         Ai = a[i]*P/(R**2*T**2)
         Bi = b[i]*P/(R*T)
-        Zi = solve_pr_cubic(Ai, Bi)
+        Zi = select_stable_pr_root(Ai, Bi, solve_pr_cubic(Ai, Bi))
 
         B_pure.append(Bi)
         Z_pure.append(Zi)
@@ -259,74 +302,109 @@ def mixture_entropy(T, P, y, species, include_excess=True):
 
     return s
 
+# =============================================================================
+# ASU thermodynamic functions
+# =============================================================================
+
+def pr_fugacity_coefficients(T, P, y, species, phase):
+    """Return PR fugacity coefficients for a liquid or vapor mixture."""
+    if phase not in ('liquid', 'vapor'):
+        raise ValueError("phase must be 'liquid' or 'vapor'")
+
+    pr = calculate_pr_parameters(T, P, y, species)
+    y = pr['y']
+    a = pr['a']
+    b = pr['b']
+    aij = pr['aij']
+    a_mix = pr['a_mix']
+    b_mix = pr['b_mix']
+    A = pr['A']
+    B = pr['B']
+
+    roots = solve_pr_cubic(A, B)
+    Z = roots[0] if phase == 'liquid' else roots[-1]
+
+    log_ratio = log(
+        (Z + (1 + sqrt(2))*B)/(Z + (1 - sqrt(2))*B)
+    )
+    interaction_sum = np.zeros(len(species))
+    for i in range(len(species)):
+        for j in range(len(species)):
+            interaction_sum[i] += aij[i, j]*y[j]
+
+    ln_phi = (
+        b/b_mix*(Z - 1)
+        - np.log(Z - B)
+        - A/(2*sqrt(2)*B)
+        * (2*interaction_sum/a_mix - b/b_mix)
+        * log_ratio
+    )
+
+    return np.exp(ln_phi)
+
+
+def test_o2_n2_fugacity():
+    """Compare PR and HEOS fugacities at an O2-N2 equilibrium state."""
+    T = 100.0
+    P = 6.0e5
+    feed = [0.21, 0.79]
+    species = utils.AIR_SPECIES
+    fluid_string = '&'.join(sp.fluid for sp in species)
+
+    flash = CP.AbstractState('HEOS', fluid_string)
+    flash.set_mole_fractions(feed)
+    flash.update(CP.PT_INPUTS, P, T)
+
+    if flash.phase() != CP.iphase_twophase:
+        raise AssertionError("The HEOS reference state is not two-phase")
+
+    phase_data = {
+        'liquid': (flash.mole_fractions_liquid(), CP.iphase_liquid),
+        'vapor': (flash.mole_fractions_vapor(), CP.iphase_gas),
+    }
+
+    print(f'O2-N2 fugacity comparison at T = {T:.2f} K, P = {P/1e5:.2f} bar')
+    print(f'HEOS vapor fraction = {flash.Q():.6f}')
+    print(
+        f"{'Phase':<8} {'Species':<8} {'z_i':>9} "
+        f"{'phi HEOS':>12} {'phi PR':>12} {'error':>10} "
+        f"{'f HEOS':>12} {'f PR':>12}"
+    )
+
+    maximum_relative_error = 0
+    for phase, (composition, imposed_phase) in phase_data.items():
+        heos = CP.AbstractState('HEOS', fluid_string)
+        heos.set_mole_fractions(composition)
+        heos.specify_phase(imposed_phase)
+        heos.update(CP.PT_INPUTS, P, T)
+
+        phi_heos = np.array([
+            heos.fugacity_coefficient(i) for i in range(len(species))
+        ])
+        phi_pr = pr_fugacity_coefficients(T, P, composition, species, phase)
+
+        for i, sp in enumerate(species):
+            relative_error = (phi_pr[i] - phi_heos[i])/phi_heos[i]
+            maximum_relative_error = max(
+                maximum_relative_error, abs(relative_error)
+            )
+            fugacity_heos = composition[i]*phi_heos[i]*P
+            fugacity_pr = composition[i]*phi_pr[i]*P
+            print(
+                f'{phase:<8} {sp.name:<8} {composition[i]:>9.6f} '
+                f'{phi_heos[i]:>12.6f} {phi_pr[i]:>12.6f} '
+                f'{100*relative_error:>9.3f}% '
+                f'{fugacity_heos/1e5:>10.6f} bar '
+                f'{fugacity_pr/1e5:>10.6f} bar'
+            )
+
+    if maximum_relative_error > 0.02:
+        raise AssertionError(
+            'PR fugacity coefficient differs from HEOS by more than 2%'
+        )
+
+    print(f'Maximum relative error: {100*maximum_relative_error:.3f}%')
+
+
 if __name__ == '__main__':
-    T_test = 1200
-    P_test = 30e6
-    y_test = [0.98, 0.02]
-    species_test = [utils.SPS['CO2'], utils.SPS['N2']]
-    MW_test, x_test = utils.mass_fraction(y_test, species_test)
-
-    h_excess_pr, s_excess_pr = calculate_pr_excess(
-        T_test, P_test, y_test, species_test
-    )
-
-    h_pr = h_excess_pr
-    for xi, sp in zip(x_test, species_test):
-        h_ref_pr = PropsSI(
-            'H', 'T', utils.T_ref, 'P', utils.P_ref, f'PR::{sp.fluid}'
-        )
-        h_pure_pr = PropsSI('H', 'T', T_test, 'P', P_test, f'PR::{sp.fluid}')
-        h_pr += xi*(h_pure_pr - h_ref_pr + sp.h_form)
-
-    fluid_heos = 'HEOS::' + '&'.join(
-        f'{sp.fluid}[{yi}]' for yi, sp in zip(y_test, species_test)
-    )
-    h_heos = PropsSI('H', 'T', T_test, 'P', P_test, fluid_heos)
-    h_heos += sum(
-        xi*(sp.h_form - sp.h_ref) for xi, sp in zip(x_test, species_test)
-    )
-
-    h_mass_weighted = 0
-    for xi, sp in zip(x_test, species_test):
-        h_pure_heos = PropsSI('H', 'T', T_test, 'P', P_test, sp.fluid)
-        h_mass_weighted += xi*(h_pure_heos - sp.h_ref + sp.h_form)
-
-    h_heos_pr = mixture_enthalpy(T_test, P_test, y_test, species_test)
-
-    s_mix_ideal = -R*sum(utils.ylny(yi) for yi in y_test)/MW_test
-
-    s_pr = s_mix_ideal + s_excess_pr
-    for xi, sp in zip(x_test, species_test):
-        s_ref_pr = PropsSI(
-            'S', 'T', utils.T_ref, 'P', utils.P_ref, f'PR::{sp.fluid}'
-        )
-        s_pure_pr = PropsSI('S', 'T', T_test, 'P', P_test, f'PR::{sp.fluid}')
-        s_pr += xi*(s_pure_pr - s_ref_pr)
-
-    s_heos = PropsSI('S', 'T', T_test, 'P', P_test, fluid_heos)
-    s_heos -= sum(xi*sp.s_ref for xi, sp in zip(x_test, species_test))
-
-    s_mass_weighted = s_mix_ideal
-    for xi, sp in zip(x_test, species_test):
-        s_pure_heos = PropsSI('S', 'T', T_test, 'P', P_test, sp.fluid)
-        s_mass_weighted += xi*(s_pure_heos - sp.s_ref)
-
-    s_heos_pr = mixture_entropy(T_test, P_test, y_test, species_test)
-
-    print(f'T = {T_test:.2f} K, P = {P_test/1e6:.2f} MPa')
-    print(f'Mass-weighted HEOS:   {h_mass_weighted:.6f} J/kg')
-    print(f'Our PR:               {h_pr:.6f} J/kg')
-    print(f'HEOS mixture:         {h_heos:.6f} J/kg')
-    print(f'HEOS + PR excess:     {h_heos_pr:.6f} J/kg')
-    print(f'PR excess:            {h_excess_pr:.6f} J/kg')
-    print(f'Mass-weighted error:  {h_mass_weighted - h_heos:.6f} J/kg')
-    print(f'PR-adjusted error:    {h_heos_pr - h_heos:.6f} J/kg')
-
-    print(f'T = {T_test:.2f} K, P = {P_test/1e6:.2f} MPa')
-    print(f'Mass-weighted HEOS:   {s_mass_weighted:.6f} J/(kg K)')
-    print(f'Our PR:               {s_pr:.6f} J/(kg K)')
-    print(f'HEOS mixture:         {s_heos:.6f} J/(kg K)')
-    print(f'HEOS + PR excess:     {s_heos_pr:.6f} J/(kg K)')
-    print(f'PR excess:            {s_excess_pr:.6f} J/(kg K)')
-    print(f'Mass-weighted error:  {s_mass_weighted - s_heos:.6f} J/(kg K)')
-    print(f'PR-adjusted error:    {s_heos_pr - s_heos:.6f} J/(kg K)')
+    test_o2_n2_fugacity()

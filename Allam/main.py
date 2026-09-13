@@ -1,12 +1,22 @@
 import time
+import sys
+from pathlib import Path
+
+# Allow this file to be launched directly while shared modules remain at the
+# project root (for example: ``python Allam/main.py``).
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+ALLAM_DIR = Path(__file__).resolve().parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 import numpy as np
 import pandas as pd
 from datetime import datetime
 from scipy.optimize import fsolve
-from cycle_residuals import allam_residuals
+from Allam.cycle_residuals import allam_residuals
 from classes import Compressor, Turbine, Pump, Intercooler, Condensator
-from setup import build_cycle
-import utils
+from Allam.setup import build_cycle
+import utils as utils
 
 
 def report_heos_diagnostics(S):
@@ -151,7 +161,7 @@ def main():
     S, Component, X0_setup, LHV_ng_local = build_cycle()
     X0 = X0_setup
     if prev == 'p':
-        X0_saved = np.load("0_solution.npy")
+        X0_saved = np.load(ALLAM_DIR / "0_solution.npy")
         if len(X0_saved) == len(X0_setup):
             X0 = X0_saved
         else:
@@ -174,10 +184,12 @@ def main():
         report_heos_diagnostics(S)
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        pd.DataFrame(results).T.to_csv(f"0_results_v11_{timestamp}.csv")
+        pd.DataFrame(results).T.to_csv(
+            ALLAM_DIR / f"0_results_v11_{timestamp}.csv"
+        )
         if input('Do you want to save this as new main solution? (y/n)') == 'y':
-            np.save("0_solution.npy", X_final)
-            pd.DataFrame(results).T.to_csv("0_results_v11.csv")
+            np.save(ALLAM_DIR / "0_solution.npy", X_final)
+            pd.DataFrame(results).T.to_csv(ALLAM_DIR / "0_results_v11.csv")
 
     else:
         print("Fsolve did not converge:", mesg)
