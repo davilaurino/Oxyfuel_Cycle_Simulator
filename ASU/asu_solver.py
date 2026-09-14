@@ -31,14 +31,14 @@ def build_variable_scales(states):
     return np.array(scales, dtype=float)
 
 def build_bounds(states, components):
-    """Return physical lower and upper bounds for least-squares variables."""
+    """Return physical bounds for least-squares and Jacobian probes."""
     lower = []
     upper = []
 
     for state in states.values():
         n = len(state.z) - 1
-        lower.extend([0.1, 70.0, 1e5, *([1e-7]*n)])
-        upper.extend([12.0, 500.0, 1e8, *([1.0 - 1e-7]*n)])
+        lower.extend([1e-3, 60.0, 1e5, *([1e-6]*n)])
+        upper.extend([12.0, 500.0, 1e8, *([1.0 - 1e-6]*n)])
 
     for component in components.values():
         n = len(component.flatten_vars())
@@ -92,18 +92,22 @@ def _color_columns(pattern):
     return groups
 
 class ColoredFiniteDifferenceJacobian:
-    """Dense Jacobian for MINPACK, evaluated using sparse column coloring."""
+    """Dense finite-difference Jacobian using sparse column coloring."""
 
     def __init__(
         self,
         function,
         pattern,
         relative_step=1.0e-6,
+        lower_bounds=None,
+        upper_bounds=None,
     ):
         self.function = function
         self.pattern = pattern
         self.relative_step = relative_step
         self.groups = _color_columns(pattern)
+        self.lower_bounds = lower_bounds
+        self.upper_bounds = upper_bounds
 
     def __call__(self, variables):
         base = self.function(variables)
@@ -111,6 +115,18 @@ class ColoredFiniteDifferenceJacobian:
 
         for columns in self.groups:
             steps = self.relative_step*np.maximum(np.abs(variables[columns]), 1.0)
+
+            if self.upper_bounds is not None:
+                use_backward = (
+                    variables[columns] + steps > self.upper_bounds[columns]
+                )
+                steps[use_backward] *= -1.0
+
+            if self.lower_bounds is not None:
+                use_forward = (
+                    variables[columns] + steps < self.lower_bounds[columns]
+                )
+                steps[use_forward] *= -1.0
 
             perturbed = variables.copy()
             perturbed[columns] += steps
@@ -164,31 +180,44 @@ def solve_asu(states, components, x0, solver='fsolve'):
                 counter,
             )
         except ValueError:
-            # MINPACK has no bounds. Reject thermodynamically invalid trial
-            # points so that its trust region contracts instead of aborting.
+            # Reject thermodynamically invalid trial points without aborting.
             counter[0] += 1
             return np.full(len(scaled_variables), 1.0e4)
 
     if solver == 'least_squares':
         lower, upper = build_bounds(states, components)
-        result = least_squares(
-            scaled_residuals,
-            scaled_x0,
-            bounds=(lower/variable_scales, upper/variable_scales),
-            x_scale='jac',
-            xtol=1e-14,
-            max_nfev=200,
-        )
-        x_final = result.x*variable_scales
-        success = result.success or result.status == 0
-        message = result.message
-        solver_calls = result.nfev
-
-    elif solver == 'fsolve':
+        lower_scaled = lower/variable_scales
+        upper_scaled = upper/variable_scales
         jacobian_pattern = build_jacobian_sparsity(states, components)
         jacobian = ColoredFiniteDifferenceJacobian(
             scaled_residuals,
             jacobian_pattern,
+            lower_bounds=lower_scaled,
+            upper_bounds=upper_scaled,
+        )
+        result = least_squares(
+            scaled_residuals,
+            scaled_x0,
+            jac=jacobian,
+            bounds=(lower_scaled, upper_scaled),
+            xtol=1e-12,
+            gtol=1e-12,
+            ftol=1e-12,
+            max_nfev=200,
+        )
+        x_final = result.x*variable_scales
+        success = result.success
+        message = result.message
+        solver_calls = result.nfev
+
+    elif solver == 'fsolve':
+        lower, upper = build_bounds(states, components)
+        jacobian_pattern = build_jacobian_sparsity(states, components)
+        jacobian = ColoredFiniteDifferenceJacobian(
+            scaled_residuals,
+            jacobian_pattern,
+            lower_bounds=lower/variable_scales,
+            upper_bounds=upper/variable_scales,
         )
         scaled_final, info, ier, message = fsolve(
             scaled_residuals,

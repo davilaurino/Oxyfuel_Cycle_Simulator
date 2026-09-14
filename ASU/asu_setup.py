@@ -206,7 +206,7 @@ def build_asu():
         m_dot = 1.9779,           # kg/s, saved-solution initial guess
         T = 92.6406,              # K
         P = 1.30e5,               # Pa
-        z = [0.999999216, 0.000000784], # mole fractions [O2, N2]
+        z = [0.99, 0.01],         # mole fractions [O2, N2]
         phase = 'liquid',
     )
     states[lpc_o2_product.name] = lpc_o2_product
@@ -216,7 +216,7 @@ def build_asu():
         air_feed = mac_air_in,
         o2_product = lpc_o2_product,
         purity_target = 0.99,
-        recovery_target = 0.75,
+        recovery_target = 0.814,
     )
     components[o2_specification.name] = o2_specification
 

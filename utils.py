@@ -16,6 +16,7 @@ MW_CO2  = PropsSI('M', 'CarbonDioxide')
 MW_H2O  = PropsSI('M', 'Water')
 MW_O2   = PropsSI('M', 'Oxygen')
 MW_N2   = PropsSI('M', 'Nitrogen')
+MW_AR   = PropsSI('M', 'Argon')
 MW_CH4  = PropsSI('M', 'Methane')
 MW_C2H6 = PropsSI('M', 'Ethane')
 MW_C3H8 = PropsSI('M', 'Propane')
@@ -24,6 +25,7 @@ h_ref_CO2 = PropsSI('H', 'P', P_ref, 'T', T_ref, 'CarbonDioxide')
 h_ref_H2O = PropsSI('H', 'P', P_ref, 'T', T_ref, 'Water')
 h_ref_O2  = PropsSI('H', 'P', P_ref, 'T', T_ref, 'Oxygen')
 h_ref_N2  = PropsSI('H', 'P', P_ref, 'T', T_ref, 'Nitrogen')
+h_ref_AR  = PropsSI('H', 'P', P_ref, 'T', T_ref, 'Argon')
 h_ref_CH4  = PropsSI('H', 'P', P_ref, 'T', T_ref, 'Methane')
 h_ref_C2H6 = PropsSI('H', 'P', P_ref, 'T', T_ref, 'Ethane')
 h_ref_C3H8 = PropsSI('H', 'P', P_ref, 'T', T_ref, 'Propane')
@@ -32,6 +34,7 @@ s_ref_CO2 = PropsSI('S', 'P', P_ref, 'T', T_ref, 'CarbonDioxide')
 s_ref_H2O = PropsSI('S', 'P', P_ref, 'T', T_ref, 'Water')
 s_ref_O2  = PropsSI('S', 'P', P_ref, 'T', T_ref, 'Oxygen')
 s_ref_N2  = PropsSI('S', 'P', P_ref, 'T', T_ref, 'Nitrogen')
+s_ref_AR  = PropsSI('S', 'P', P_ref, 'T', T_ref, 'Argon')
 s_ref_CH4  = PropsSI('S', 'P', P_ref, 'T', T_ref, 'Methane')
 s_ref_C2H6 = PropsSI('S', 'P', P_ref, 'T', T_ref, 'Ethane')
 s_ref_C3H8 = PropsSI('S', 'P', P_ref, 'T', T_ref, 'Propane')
@@ -44,11 +47,13 @@ h_form_CO2  = -393520/MW_CO2
 h_form_H2O  = -285830/MW_H2O
 h_form_O2   = 0
 h_form_N2   = 0
+h_form_AR   = 0
 
 Tc_CO2 = PropsSI('Tcrit', 'PR::CarbonDioxide')
 Tc_H2O = PropsSI('Tcrit', 'PR::Water')
 Tc_O2  = PropsSI('Tcrit', 'PR::Oxygen')
 Tc_N2  = PropsSI('Tcrit', 'PR::Nitrogen')
+Tc_Ar = PropsSI('Tcrit', 'PR::Argon')
 Tc_CH4 = PropsSI('Tcrit', 'PR::Methane')
 Tc_C2H6 = PropsSI('Tcrit', 'PR::Ethane')
 Tc_C3H8 = PropsSI('Tcrit', 'PR::Propane')
@@ -57,6 +62,7 @@ Pc_CO2 = PropsSI('Pcrit', 'PR::CarbonDioxide')
 Pc_H2O = PropsSI('Pcrit', 'PR::Water')
 Pc_O2  = PropsSI('Pcrit', 'PR::Oxygen')
 Pc_N2  = PropsSI('Pcrit', 'PR::Nitrogen')
+Pc_Ar = PropsSI('Pcrit', 'PR::Argon')
 Pc_CH4 = PropsSI('Pcrit', 'PR::Methane')
 Pc_C2H6 = PropsSI('Pcrit', 'PR::Ethane')
 Pc_C3H8 = PropsSI('Pcrit', 'PR::Propane')
@@ -65,6 +71,7 @@ omega_CO2 = PropsSI('acentric', 'CarbonDioxide')
 omega_H2O = PropsSI('acentric', 'Water')
 omega_O2  = PropsSI('acentric', 'Oxygen')
 omega_N2  = PropsSI('acentric', 'Nitrogen')
+omega_Ar = PropsSI('acentric', 'Argon')
 omega_CH4 = PropsSI('acentric', 'Methane')
 omega_C2H6 = PropsSI('acentric', 'Ethane')
 omega_C3H8 = PropsSI('acentric', 'Propane')
@@ -90,6 +97,7 @@ SPS = {
     'H2O':  Species('H2O',  'Water',         MW_H2O,  h_ref_H2O,  h_form_H2O,  s_ref_H2O,  Tc_H2O,  Pc_H2O,  omega_H2O),
     'O2':   Species('O2',   'Oxygen',        MW_O2,   h_ref_O2,   h_form_O2,   s_ref_O2,   Tc_O2,   Pc_O2,   omega_O2),
     'N2':   Species('N2',   'Nitrogen',      MW_N2,   h_ref_N2,   h_form_N2,   s_ref_N2,   Tc_N2,   Pc_N2,   omega_N2),
+    'AR':   Species('AR',   'Argon',         MW_AR,   h_ref_AR,   h_form_AR,   s_ref_AR,   Tc_Ar,   Pc_Ar,   omega_Ar),
     'CH4':  Species('CH4',  'Methane',       MW_CH4,  h_ref_CH4,  h_form_CH4,  s_ref_CH4,  Tc_CH4,  Pc_CH4,  omega_CH4,  n_C=1, n_H=4),
     'C2H6': Species('C2H6', 'Ethane',        MW_C2H6, h_ref_C2H6, h_form_C2H6, s_ref_C2H6, Tc_C2H6, Pc_C2H6, omega_C2H6, n_C=2, n_H=6),
     'C3H8': Species('C3H8', 'Propane',       MW_C3H8, h_ref_C3H8, h_form_C3H8, s_ref_C3H8, Tc_C3H8, Pc_C3H8, omega_C3H8, n_C=3, n_H=8),
