@@ -5,9 +5,7 @@ import numpy as np
 from scipy.optimize import brentq
 import utils
 
-# Fixed reference scales used for both solver variables and same-unit
-# residuals. Energy and specific enthalpy have no corresponding state
-# variables, so they use separate engineering reference scales.
+# Fixed reference scales used for both solver variables and same-unit residuals. 
 FLOW_SCALE = 1.0                    # kg/s
 TEMPERATURE_SCALE = 10.0            # K
 PRESSURE_SCALE = 1.0e5              # Pa
@@ -22,46 +20,49 @@ T_mult = 1.0/TEMPERATURE_SCALE
 P_mult = 1.0/PRESSURE_SCALE
 z_mult = 1.0/COMPOSITION_SCALE
 
+PHASE_NAMES = {
+    CP.iphase_liquid: 'liquid',
+    CP.iphase_gas: 'vapor',
+    CP.iphase_twophase: 'two-phase',
+    CP.iphase_supercritical: 'supercritical',
+    CP.iphase_supercritical_liquid: 'supercritical liquid',
+    CP.iphase_supercritical_gas: 'supercritical vapor',
+    CP.iphase_critical_point: 'critical point',
+    CP.iphase_unknown: 'unknown',
+}
+
+
+def new_heos(species):
+    """Create a reusable HEOS state for a list of species."""
+    fluids = '&'.join(sp.fluid for sp in species)
+    return CP.AbstractState('HEOS', fluids)
+
+
 class State:
     """A process stream backed by a reusable CoolProp HEOS state.
 
     Process flow and the primary thermodynamic properties use a mass basis.
-    Their molar equivalents are cached for phase-equilibrium calculations.
-    """
+    Mass fractions and phase-equilibrium data are cached for downstream units."""
 
     def __init__(self, name, species, m_dot, T, P, z, phase=None):
         self.name = name
 
         if phase not in (None, 'liquid', 'vapor'):
-            raise ValueError(
-                "State phase must be None, 'liquid', or 'vapor'"
-            )
+            raise ValueError("State phase must be None, 'liquid', or 'vapor'")
 
         self.species = []
         for species_name in species:
-            self.species.append(utils.SPS[species_name])
+                self.species.append(utils.SPS[species_name])
 
         self.imposed_phase = phase
+        self.w = np.zeros(len(self.species))
+        if self.imposed_phase in ('liquid', 'vapor'):
+            self.phi = np.zeros(len(self.species))
+        else:
+            self.phi = None
 
-        fluid_names = []
-        for sp in self.species:
-            fluid_names.append(sp.fluid)
-
-        self.heos = CP.AbstractState('HEOS', '&'.join(fluid_names))
-
+        self.heos = new_heos(self.species)
         self.update(m_dot, T, P, z)
-
-    def variable_names(self):
-        """Return solver-variable names in packing order."""
-        names = [
-            f'{self.name}.m_dot',
-            f'{self.name}.T',
-            f'{self.name}.P',
-        ]
-        for sp in self.species[:-1]:
-            names.append(f'{self.name}.z_{sp.name}')
-
-        return names
 
     def flatten_vars(self):
         """Return this state's independent solver variables."""
@@ -73,63 +74,47 @@ class State:
         T = variables[start_idx + 1]
         P = variables[start_idx + 2]
 
-        n = len(self.z) - 1
+        n_composition = len(self.z) - 1
         z = self.z.copy()
-        z[:-1] = variables[start_idx + 3:start_idx + 3 + n]
+        z[:-1] = variables[
+            start_idx + 3:start_idx + 3 + n_composition
+        ]
         z[-1] = 1.0 - np.sum(z[:-1])
 
         self.update(m_dot, T, P, z)
 
-        i = start_idx + 3 + n
-        return i
+        return start_idx + 3 + n_composition
 
     def update(self, m_dot, T, P, z):
-        """Update the process state and cache mass and molar properties."""
+        """Update the process state and cache its thermodynamic properties."""
         self.m_dot = m_dot
         self.T = T
         self.P = P
         self.z = np.array(z, dtype=float, copy=True)
 
         self.heos.set_mole_fractions(self.z)
-        self.heos.unspecify_phase()
         if self.imposed_phase == 'liquid':
             self.heos.specify_phase(CP.iphase_liquid)
         elif self.imposed_phase == 'vapor':
             self.heos.specify_phase(CP.iphase_gas)
+        else:
+            self.heos.unspecify_phase()
 
         self.heos.update(CP.PT_INPUTS, self.P, self.T)
 
-        phase_names = {
-            CP.iphase_liquid: 'liquid',
-            CP.iphase_gas: 'vapor',
-            CP.iphase_twophase: 'two-phase',
-            CP.iphase_supercritical: 'supercritical',
-            CP.iphase_supercritical_liquid: 'supercritical liquid',
-            CP.iphase_supercritical_gas: 'supercritical vapor',
-            CP.iphase_critical_point: 'critical point',
-            CP.iphase_unknown: 'unknown',
-        }
-        self.phase = phase_names.get(self.heos.phase(), 'unknown')
+        self.phase = PHASE_NAMES.get(self.heos.phase(), 'unknown')
         self.h = self.heos.hmass()
         self.s = self.heos.smass()
-        self.rho = self.heos.rhomass()
-        self.h_molar = self.heos.hmolar()
-        self.s_molar = self.heos.smolar()
-        self.rho_molar = self.heos.rhomolar()
         self.molar_mass = self.heos.molar_mass()
-        self.n_dot = self.m_dot/self.molar_mass
 
-        self.w = np.zeros(len(self.species))
-        for i, sp in enumerate(self.species):
-            self.w[i] = self.z[i]*sp.MW/self.molar_mass
+        for i, (z_i, sp) in enumerate(zip(self.z, self.species)):
+            self.w[i] = z_i*sp.MW/self.molar_mass
 
         self.vapor_fraction = self.heos.Q()
         if self.imposed_phase in ('liquid', 'vapor'):
-            self.phi = np.zeros(len(self.species))
             for i in range(len(self.species)):
                 self.phi[i] = self.heos.fugacity_coefficient(i)
-        else:
-            self.phi = None
+
 
 class Input:
     """Fixed inlet conditions applied to an outlet process stream."""
@@ -141,12 +126,6 @@ class Input:
         self.z = np.array(z, dtype=float, copy=True)
         self.outlet = outlet
         self.m_dot = m_dot
-
-    def flatten_vars(self):
-        return []
-
-    def unpack_vars(self, variables, start_idx):
-        return start_idx
 
     def residuals(self):
         eqs = []
@@ -163,35 +142,19 @@ class Input:
 
         return eqs
 
+
 class Compressor:
     """Adiabatic gas compressor with an exact gas isentropic flash."""
 
-    def __init__(
-        self,
-        name,
-        efficiency,
-        pressure_ratio,
-        inlet,
-        outlet,
-        W=None,
-    ):
+    def __init__(self, name, efficiency, pressure_ratio, inlet, outlet):
         self.name = name
         self.efficiency = efficiency
         self.pressure_ratio = pressure_ratio
         self.inlet = inlet
         self.outlet = outlet
-        self.W = W
+        self.W = None
 
-        fluid_names = []
-        for sp in inlet.species:
-            fluid_names.append(sp.fluid)
-        self.heos = CP.AbstractState('HEOS', '&'.join(fluid_names))
-
-    def flatten_vars(self):
-        return []
-
-    def unpack_vars(self, variables, start_idx):
-        return start_idx
+        self.heos = new_heos(inlet.species)
 
     def isentropic_enthalpy(self, P, s, z):
         self.heos.set_mole_fractions(z)
@@ -207,45 +170,30 @@ class Compressor:
         P_out = inlet.P*self.pressure_ratio
 
         eqs.append((outlet.m_dot - inlet.m_dot)*m_mult)
-        for i in range(len(inlet.species) - 1):
+        eqs.append((outlet.P - P_out)*P_mult)
+
+        for i in range(len(inlet.z) - 1):
             eqs.append((outlet.z[i] - inlet.z[i])*z_mult)
 
-        eqs.append((outlet.P - P_out)*P_mult)
         h_iso = self.isentropic_enthalpy(P_out, inlet.s, outlet.z)
         eqs.append(((outlet.h - inlet.h) - (h_iso - inlet.h)/self.efficiency)*h_mult)
 
         self.W = inlet.m_dot*(inlet.h - outlet.h)
         return eqs
 
+
 class Turbine:
     """Adiabatic turbine with a phase-aware isentropic reference flash."""
 
-    def __init__(
-        self,
-        name,
-        efficiency,
-        P_out,
-        inlet,
-        outlet,
-        W=None,
-    ):
+    def __init__(self, name, efficiency, P_out, inlet, outlet):
         self.name = name
         self.efficiency = efficiency
         self.P_out = P_out
         self.inlet = inlet
         self.outlet = outlet
-        self.W = W
+        self.W = None
 
-        fluid_names = []
-        for sp in inlet.species:
-            fluid_names.append(sp.fluid)
-        self.heos = CP.AbstractState('HEOS', '&'.join(fluid_names))
-
-    def flatten_vars(self):
-        return []
-
-    def unpack_vars(self, variables, start_idx):
-        return start_idx
+        self.heos = new_heos(inlet.species)
 
     def isentropic_enthalpy(self, P, s, z):
         self.heos.set_mole_fractions(z)
@@ -275,51 +223,33 @@ class Turbine:
         outlet = self.outlet
 
         eqs.append((outlet.m_dot - inlet.m_dot)*m_mult)
-        for i in range(len(inlet.species) - 1):
+        eqs.append((outlet.P - self.P_out)*P_mult)
+
+        for i in range(len(inlet.z) - 1):
             eqs.append((outlet.z[i] - inlet.z[i])*z_mult)
 
-        eqs.append((outlet.P - self.P_out)*P_mult)
         h_iso = self.isentropic_enthalpy(self.P_out, inlet.s, inlet.z)
-        eqs.append(
-            ((inlet.h - outlet.h) - self.efficiency*(inlet.h - h_iso))*h_mult
-        )
+        eqs.append(((inlet.h - outlet.h) - self.efficiency*(inlet.h - h_iso))*h_mult)
 
-        # Positive work denotes power generated by the expansion.
         self.W = inlet.m_dot*(inlet.h - outlet.h)
         return eqs
+
 
 class LOXPump:
     """Liquid-oxygen pump with an exact liquid isentropic reference state."""
 
-    def __init__(
-        self,
-        name,
-        efficiency,
-        P_out,
-        inlet,
-        outlet,
-        W=None,
-    ):
+    def __init__(self, name, efficiency, P_out, inlet, outlet):
         self.name = name
         self.efficiency = efficiency
         self.P_out = P_out
         self.inlet = inlet
         self.outlet = outlet
-        self.W = W
+        self.W = None
 
         if inlet.imposed_phase != 'liquid' or outlet.imposed_phase != 'liquid':
             raise ValueError('LOXPump requires liquid-imposed inlet and outlet states')
 
-        fluid_names = []
-        for sp in inlet.species:
-            fluid_names.append(sp.fluid)
-        self.heos = CP.AbstractState('HEOS', '&'.join(fluid_names))
-
-    def flatten_vars(self):
-        return []
-
-    def unpack_vars(self, variables, start_idx):
-        return start_idx
+        self.heos = new_heos(inlet.species)
 
     def isentropic_enthalpy(self, P, s, z):
         self.heos.set_mole_fractions(z)
@@ -334,40 +264,28 @@ class LOXPump:
         outlet = self.outlet
 
         eqs.append((outlet.m_dot - inlet.m_dot)*m_mult)
-        for i in range(len(inlet.species) - 1):
+        eqs.append((outlet.P - self.P_out)*P_mult)
+
+        for i in range(len(inlet.z) - 1):
             eqs.append((outlet.z[i] - inlet.z[i])*z_mult)
 
-        eqs.append((outlet.P - self.P_out)*P_mult)
         h_iso = self.isentropic_enthalpy(self.P_out, inlet.s, inlet.z)
         eqs.append(((outlet.h - inlet.h) - (h_iso - inlet.h)/self.efficiency)*h_mult)
 
         self.W = inlet.m_dot*(inlet.h - outlet.h)
         return eqs
 
+
 class Intercooler:
     """Cooler with a specified outlet temperature and pressure drop."""
 
-    def __init__(
-        self,
-        name,
-        T_out,
-        pressure_drop_percent,
-        inlet,
-        outlet,
-        Q=None,
-    ):
+    def __init__(self, name, T_out, pressure_drop_percent, inlet, outlet):
         self.name = name
         self.T_out = T_out
         self.pressure_drop_percent = pressure_drop_percent
         self.inlet = inlet
         self.outlet = outlet
-        self.Q = Q
-
-    def flatten_vars(self):
-        return []
-
-    def unpack_vars(self, variables, start_idx):
-        return start_idx
+        self.Q = None
 
     def residuals(self):
         eqs = []
@@ -376,162 +294,91 @@ class Intercooler:
         pressure_ratio = 1.0 - self.pressure_drop_percent/100.0
 
         eqs.append((outlet.m_dot - inlet.m_dot)*m_mult)
-        for i in range(len(inlet.species) - 1):
-            eqs.append((outlet.z[i] - inlet.z[i])*z_mult)
-
-        eqs.append((outlet.P - inlet.P*pressure_ratio)*P_mult)
         eqs.append((outlet.T - self.T_out)*T_mult)
+        eqs.append((outlet.P - inlet.P*pressure_ratio)*P_mult)
+
+        for i in range(len(inlet.z) - 1):
+            eqs.append((outlet.z[i] - inlet.z[i])*z_mult)
 
         self.Q = inlet.m_dot*(outlet.h - inlet.h)
         return eqs
 
+
 class ReboilerCondenser:
-    """Total condenser coupled to a partial reboiler with a heat loss.
+    """Coupled total condenser and partial reboiler with equal duties."""
 
-    Each duty is calculated from its stream enthalpy change, and their
-    difference is constrained by the specified condenser heat-loss fraction.
-    """
-
-    def __init__(
-        self,
-        name,
-        condenser_vapor_in,
-        condenser_liquid_out,
-        reboiler_liquid_in,
-        reboiler_liquid_out,
-        reboiler_vapor_out,
-        T_condenser_out,
-        condenser_heat_loss_fraction,
-    ):
-        if not 0.0 <= condenser_heat_loss_fraction < 1.0:
-            raise ValueError(
-                'condenser_heat_loss_fraction must be between 0 and 1'
-            )
-
+    def __init__(self, name, condenser_vapor_in, condenser_liquid_out, reboiler_liquid_in, reboiler_liquid_out, reboiler_vapor_out, T_cold_pinch):
         self.name = name
         self.condenser_vapor_in = condenser_vapor_in
         self.condenser_liquid_out = condenser_liquid_out
         self.reboiler_liquid_in = reboiler_liquid_in
         self.reboiler_liquid_out = reboiler_liquid_out
         self.reboiler_vapor_out = reboiler_vapor_out
-        self.T_condenser_out = T_condenser_out
-        self.condenser_heat_loss_fraction = condenser_heat_loss_fraction
+        self.T_cold_pinch = T_cold_pinch
         self.Q_condenser = None
         self.Q_reboiler = None
 
-    def flatten_vars(self):
-        return []
-
-    def unpack_vars(self, variables, start_idx):
-        return start_idx
-
     def residuals(self):
         eqs = []
-        condenser_vapor_in = self.condenser_vapor_in
-        condenser_liquid_out = self.condenser_liquid_out
-        reboiler_liquid_in = self.reboiler_liquid_in
-        reboiler_liquid_out = self.reboiler_liquid_out
-        reboiler_vapor_out = self.reboiler_vapor_out
-        self.Q_condenser = (
-            condenser_liquid_out.m_dot*condenser_liquid_out.h
-            - condenser_vapor_in.m_dot*condenser_vapor_in.h
-        )
-        self.Q_reboiler = (
-            reboiler_liquid_out.m_dot*reboiler_liquid_out.h
-            + reboiler_vapor_out.m_dot*reboiler_vapor_out.h
-            - reboiler_liquid_in.m_dot*reboiler_liquid_in.h
-        )
+        cv_in = self.condenser_vapor_in
+        cl_out = self.condenser_liquid_out
+        rl_in = self.reboiler_liquid_in
+        rl_out = self.reboiler_liquid_out
+        rv_out = self.reboiler_vapor_out
 
-        transferred_fraction = 1.0 - self.condenser_heat_loss_fraction
-        eqs.append((
-            self.Q_reboiler
-            - transferred_fraction*(-self.Q_condenser)
-        )*H_mult)
+        self.Q_condenser = (cl_out.m_dot*cl_out.h - cv_in.m_dot*cv_in.h)
+        self.Q_reboiler = (rl_out.m_dot*rl_out.h + rv_out.m_dot*rv_out.h - rl_in.m_dot*rl_in.h)
 
-        eqs.append(
-            (condenser_vapor_in.m_dot - condenser_liquid_out.m_dot)*m_mult
-        )
-        eqs.append(
-            (condenser_liquid_out.T - self.T_condenser_out)*T_mult
-        )
-        eqs.append(
-            (condenser_liquid_out.P - condenser_vapor_in.P)*P_mult
-        )
+        eqs.append((cv_in.m_dot - cl_out.m_dot)*m_mult)
 
-        for i in range(len(condenser_liquid_out.z) - 1):
-            eqs.append(
-                (condenser_liquid_out.z[i] - condenser_vapor_in.z[i])*z_mult
-            )
-
-        for i in range(len(reboiler_liquid_in.species)):
-            m_in_i = reboiler_liquid_in.m_dot*reboiler_liquid_in.w[i]
-            m_out_i = (
-                reboiler_liquid_out.m_dot*reboiler_liquid_out.w[i]
-                + reboiler_vapor_out.m_dot*reboiler_vapor_out.w[i]
-            )
+        for i in range(len(rl_in.species)):
+            m_in_i = rl_in.m_dot*rl_in.w[i]
+            m_out_i = (rl_out.m_dot*rl_out.w[i] + rv_out.m_dot*rv_out.w[i])
             eqs.append((m_in_i - m_out_i)*m_mult)
 
-        eqs.append((reboiler_liquid_out.T - reboiler_vapor_out.T)*T_mult)
-        eqs.append((reboiler_liquid_out.P - reboiler_liquid_in.P)*P_mult)
-        eqs.append((reboiler_vapor_out.P - reboiler_liquid_in.P)*P_mult)
+        # Careful! As the pinch is enforced and condenser oulet phase is imposed as liquid, the condensation must not be partial.
+        eqs.append((cl_out.T - rl_in.T - self.T_cold_pinch)*T_mult)
+        eqs.append((rl_out.T - rv_out.T)*T_mult)
 
-        for i in range(len(reboiler_liquid_in.species)):
-            f_liquid = (
-                reboiler_liquid_out.phi[i]
-                * reboiler_liquid_out.z[i]
-                * reboiler_liquid_out.P
-            )
-            f_vapor = (
-                reboiler_vapor_out.phi[i]
-                * reboiler_vapor_out.z[i]
-                * reboiler_vapor_out.P
-            )
+        eqs.append((cl_out.P - cv_in.P)*P_mult)
+        eqs.append((rl_out.P - rl_in.P)*P_mult)
+        eqs.append((rv_out.P - rl_in.P)*P_mult)
+
+        for i in range(len(cl_out.z) - 1):
+            eqs.append((cl_out.z[i] - cv_in.z[i])*z_mult)
+
+        for i in range(len(rl_in.species)):
+            f_liquid = (rl_out.phi[i]*rl_out.z[i]*rl_out.P)
+            f_vapor = (rv_out.phi[i]*rv_out.z[i]*rv_out.P)
             eqs.append((f_liquid - f_vapor)*P_mult)
 
+        eqs.append((self.Q_reboiler + self.Q_condenser)*H_mult)
         return eqs
 
 
 class O2Specification:
-    """Flowsheet-level oxygen purity and recovery specifications."""
+    """Flowsheet-level oxygen product specifications."""
 
-    def __init__(
-        self,
-        name,
-        air_feed,
-        o2_product,
-        purity_target,
-        recovery_target,
-        o2_index=0,
-    ):
+    def __init__(self, name, o2_product, purity_target):
         if not 0.0 < purity_target <= 1.0:
             raise ValueError('purity_target must be between 0 and 1')
-        if not 0.0 < recovery_target <= 1.0:
-            raise ValueError('recovery_target must be between 0 and 1')
 
         self.name = name
-        self.air_feed = air_feed
         self.o2_product = o2_product
         self.purity_target = purity_target
-        self.recovery_target = recovery_target
-        self.o2_index = o2_index
-
-    def flatten_vars(self):
-        return []
-
-    def unpack_vars(self, variables, start_idx):
-        return start_idx
 
     def residuals(self):
-        feed_o2_flow = self.air_feed.m_dot*self.air_feed.w[self.o2_index]
-        product_o2_flow = (
-            self.o2_product.m_dot*self.o2_product.w[self.o2_index]
-        )
-        recovery = product_o2_flow/feed_o2_flow
+        eqs = []
+        product = self.o2_product
 
-        return [
-            (self.o2_product.z[self.o2_index] - self.purity_target)*z_mult,
-            (recovery - self.recovery_target)*z_mult,
-        ]
+        for i, species in enumerate(product.species):
+            if species.name == 'O2':
+                o2_index = i
+                break
+
+        eqs.append((product.z[o2_index] - self.purity_target)*z_mult)
+        return eqs
+
 
 class Splitter:
     """Divide one process stream into two streams without separation."""
@@ -543,12 +390,6 @@ class Splitter:
         self.outlet2 = outlet2
         self.split_fraction = split_fraction
 
-    def flatten_vars(self):
-        return []
-
-    def unpack_vars(self, variables, start_idx):
-        return start_idx
-
     def residuals(self):
         eqs = []
         inlet = self.inlet
@@ -556,9 +397,7 @@ class Splitter:
         outlet2 = self.outlet2
 
         if self.split_fraction is not None:
-            eqs.append(
-                (outlet1.m_dot - self.split_fraction*inlet.m_dot)*m_mult
-            )
+            eqs.append((outlet1.m_dot - self.split_fraction*inlet.m_dot)*m_mult)
 
         eqs.append((inlet.m_dot - outlet1.m_dot - outlet2.m_dot)*m_mult)
         eqs.append((outlet1.T - inlet.T)*T_mult)
@@ -572,150 +411,54 @@ class Splitter:
 
         return eqs
 
-class HeatExchanger:
-    """Three-stream heat exchanger with two hot streams and one cold stream."""
 
-    def __init__(
-        self,
-        name,
-        pressure_drop_percent,
-        T_diff_hot1,
-        T_diff_cold,
-        hot1_in,
-        hot2_in,
-        cold_in,
-        hot1_out,
-        hot2_out,
-        cold_out,
-    ):
+class Mod_MSHX:
+    """Configurable multi-stream heat exchanger.
+
+    ``stream_pairs`` contains ``(inlet, outlet)`` tuples.  Each approach is
+    specified as ``(hot_stream, cold_stream, temperature_difference)`` and
+    each fixed temperature as ``(stream, temperature)``.
+
+    ``hot_streams`` is optional and is used only to report the heat released
+    by selected streams as ``Q``."""
+
+    def __init__(self, name, pressure_drop_percent, stream_pairs, fixed_temperatures=None, approaches=None, hot_streams=None,):
         self.name = name
         self.pressure_drop_percent = pressure_drop_percent
-        self.T_diff_hot1 = T_diff_hot1
-        self.T_diff_cold = T_diff_cold
-        self.hot1_in = hot1_in
-        self.hot2_in = hot2_in
-        self.cold_in = cold_in
-        self.hot1_out = hot1_out
-        self.hot2_out = hot2_out
-        self.cold_out = cold_out
+        self.stream_pairs = stream_pairs
+        self.fixed_temperatures = [] if fixed_temperatures is None else fixed_temperatures
+        self.approaches = [] if approaches is None else approaches
+        self.hot_streams = hot_streams
         self.Q = None
-
-    def flatten_vars(self):
-        return []
-
-    def unpack_vars(self, variables, start_idx):
-        return start_idx
 
     def residuals(self):
         eqs = []
-
-        stream_pairs = [
-            (self.hot1_in, self.hot1_out),
-            (self.hot2_in, self.hot2_out),
-            (self.cold_in, self.cold_out),
-        ]
-
         pressure_ratio = 1.0 - self.pressure_drop_percent/100.0
-        for inlet, outlet in stream_pairs:
+
+        for inlet, outlet in self.stream_pairs:
             eqs.append((outlet.m_dot - inlet.m_dot)*m_mult)
             eqs.append((outlet.P - inlet.P*pressure_ratio)*P_mult)
-
             for i in range(len(inlet.z) - 1):
-                eqs.append((outlet.z[i] - inlet.z[i])*z_mult)
+                            eqs.append((outlet.z[i] - inlet.z[i])*z_mult)
 
-        eqs.append((self.hot1_out.T - self.cold_in.T - self.T_diff_hot1)*T_mult)
-        eqs.append((self.cold_out.T - self.hot1_in.T + self.T_diff_cold)*T_mult)
+        for stream, temperature in self.fixed_temperatures:
+            eqs.append((stream.T - temperature)*T_mult)
 
-        energy_balance = 0
-        for inlet, outlet in stream_pairs:
-            energy_balance += inlet.m_dot*(outlet.h - inlet.h)
-        eqs.append(energy_balance*H_mult)
-
-        self.Q = (
-            self.hot1_in.m_dot*(self.hot1_in.h - self.hot1_out.h)
-            + self.hot2_in.m_dot*(self.hot2_in.h - self.hot2_out.h)
-        )
-
-        return eqs
-
-class HX1:
-    """Four-stream main exchanger with warm-end product pinch targets.
-
-    The HPC air outlet is determined by the overall energy balance and is free
-    to enter the two-phase region. The LPC air outlet target protects the
-    downstream turbine inlet condition. Product outlet temperatures approach
-    their corresponding warm air inlet temperatures by specified differences.
-    """
-
-    def __init__(
-        self,
-        name,
-        pressure_drop_percent,
-        T_lpc_air_out,
-        T_diff_n2,
-        T_diff_o2,
-        hpc_air_in,
-        lpc_air_in,
-        n2_in,
-        o2_in,
-        hpc_air_out,
-        lpc_air_out,
-        n2_out,
-        o2_out,
-    ):
-        self.name = name
-        self.pressure_drop_percent = pressure_drop_percent
-        self.T_lpc_air_out = T_lpc_air_out
-        self.T_diff_n2 = T_diff_n2
-        self.T_diff_o2 = T_diff_o2
-        self.hpc_air_in = hpc_air_in
-        self.lpc_air_in = lpc_air_in
-        self.n2_in = n2_in
-        self.o2_in = o2_in
-        self.hpc_air_out = hpc_air_out
-        self.lpc_air_out = lpc_air_out
-        self.n2_out = n2_out
-        self.o2_out = o2_out
-        self.Q = None
-
-    def flatten_vars(self):
-        return []
-
-    def unpack_vars(self, variables, start_idx):
-        return start_idx
-
-    def residuals(self):
-        eqs = []
-        stream_pairs = [
-            (self.hpc_air_in, self.hpc_air_out),
-            (self.lpc_air_in, self.lpc_air_out),
-            (self.n2_in, self.n2_out),
-            (self.o2_in, self.o2_out),
-        ]
-
-        pressure_ratio = 1.0 - self.pressure_drop_percent/100.0
-        for inlet, outlet in stream_pairs:
-            eqs.append((outlet.m_dot - inlet.m_dot)*m_mult)
-            eqs.append((outlet.P - inlet.P*pressure_ratio)*P_mult)
-
-            for i in range(len(inlet.z) - 1):
-                eqs.append((outlet.z[i] - inlet.z[i])*z_mult)
-
-        eqs.append((self.lpc_air_out.T - self.T_lpc_air_out)*T_mult)
-        eqs.append((self.n2_out.T - self.hpc_air_in.T + self.T_diff_n2)*T_mult)
-        eqs.append((self.o2_out.T - self.lpc_air_in.T + self.T_diff_o2)*T_mult)
+        for hot_stream, cold_stream, temperature_difference in self.approaches:
+            eqs.append((hot_stream.T - cold_stream.T - temperature_difference)*T_mult)
 
         energy_balance = 0.0
-        for inlet, outlet in stream_pairs:
+        for inlet, outlet in self.stream_pairs:
             energy_balance += inlet.m_dot*(outlet.h - inlet.h)
         eqs.append(energy_balance*H_mult)
 
-        self.Q = (
-            self.hpc_air_in.m_dot*(self.hpc_air_in.h - self.hpc_air_out.h)
-            + self.lpc_air_in.m_dot*(self.lpc_air_in.h - self.lpc_air_out.h)
-        )
+        if self.hot_streams is not None:
+            self.Q = 0.0
+            for inlet, outlet in self.hot_streams:
+                self.Q += inlet.m_dot*(inlet.h - outlet.h)
 
         return eqs
+
 
 class Valve:
     """Isenthalpic pressure-reduction valve."""
@@ -725,12 +468,6 @@ class Valve:
         self.P_out = P_out
         self.inlet = inlet
         self.outlet = outlet
-
-    def flatten_vars(self):
-        return []
-
-    def unpack_vars(self, variables, start_idx):
-        return start_idx
 
     def residuals(self):
         eqs = []
@@ -744,8 +481,8 @@ class Valve:
             eqs.append((outlet.z[i] - inlet.z[i])*z_mult)
 
         eqs.append((outlet.h - inlet.h)*h_mult)
-
         return eqs
+
 
 class Tray:
     """Equilibrium stage with liquid and vapor outlet streams."""
@@ -758,12 +495,6 @@ class Tray:
         self.liquid_out = liquid_out
         self.vapor_out = vapor_out
         self.feeds = feeds
-
-    def flatten_vars(self):
-        return []
-
-    def unpack_vars(self, variables, start_idx):
-        return start_idx
 
     def residuals(self):
         eqs = []
@@ -786,12 +517,6 @@ class Tray:
             m_out_i = L_out.m_dot*L_out.w[i] + V_out.m_dot*V_out.w[i]
             eqs.append((m_in_i - m_out_i)*m_mult)
 
-        H_in = 0
-        for inlet in inlets:
-            H_in += inlet.m_dot*inlet.h
-        H_out = L_out.m_dot*L_out.h + V_out.m_dot*V_out.h
-        eqs.append((H_in - H_out)*H_mult)
-
         eqs.append((L_out.T - V_out.T)*T_mult)
         eqs.append((L_out.P - self.P)*P_mult)
         eqs.append((V_out.P - self.P)*P_mult)
@@ -801,4 +526,8 @@ class Tray:
             f_vapor = V_out.phi[i]*V_out.z[i]*V_out.P
             eqs.append((f_liquid - f_vapor)*P_mult)
 
+        H_in = sum(inlet.m_dot*inlet.h for inlet in inlets)
+        H_out = L_out.m_dot*L_out.h + V_out.m_dot*V_out.h
+
+        eqs.append((H_in - H_out)*H_mult)
         return eqs
