@@ -5,14 +5,16 @@ import numpy as np
 from scipy.optimize import brentq
 import utils
 
-# Fixed reference scales used for both solver variables and same-unit residuals. 
-FLOW_SCALE = 1.0                    # kg/s
-TEMPERATURE_SCALE = 10.0            # K
-PRESSURE_SCALE = 1.0e5              # Pa
-COMPOSITION_SCALE = 1.0e-2          # mole fraction
-ENERGY_SCALE = 1.0e6                # W
-SPECIFIC_ENTHALPY_SCALE = 1.0e5     # J/kg
+from ASU.asu_config import (
+    COMPOSITION_SCALE,
+    ENERGY_SCALE,
+    FLOW_SCALE,
+    PRESSURE_SCALE,
+    SPECIFIC_ENTHALPY_SCALE,
+    TEMPERATURE_SCALE,
+)
 
+# Residual scaling factors.
 H_mult = 1.0/ENERGY_SCALE
 h_mult = 1.0/SPECIFIC_ENTHALPY_SCALE
 m_mult = 1.0/FLOW_SCALE
@@ -121,6 +123,7 @@ class Input:
 
     def __init__(self, name, T, P, z, outlet, m_dot=None):
         self.name = name
+        self.state_dependencies = (outlet,)
         self.T = T
         self.P = P
         self.z = np.array(z, dtype=float, copy=True)
@@ -148,6 +151,7 @@ class Compressor:
 
     def __init__(self, name, efficiency, pressure_ratio, inlet, outlet):
         self.name = name
+        self.state_dependencies = (inlet, outlet)
         self.efficiency = efficiency
         self.pressure_ratio = pressure_ratio
         self.inlet = inlet
@@ -187,6 +191,7 @@ class Turbine:
 
     def __init__(self, name, efficiency, P_out, inlet, outlet):
         self.name = name
+        self.state_dependencies = (inlet, outlet)
         self.efficiency = efficiency
         self.P_out = P_out
         self.inlet = inlet
@@ -240,6 +245,7 @@ class LOXPump:
 
     def __init__(self, name, efficiency, P_out, inlet, outlet):
         self.name = name
+        self.state_dependencies = (inlet, outlet)
         self.efficiency = efficiency
         self.P_out = P_out
         self.inlet = inlet
@@ -281,6 +287,7 @@ class Intercooler:
 
     def __init__(self, name, T_out, pressure_drop_percent, inlet, outlet):
         self.name = name
+        self.state_dependencies = (inlet, outlet)
         self.T_out = T_out
         self.pressure_drop_percent = pressure_drop_percent
         self.inlet = inlet
@@ -309,6 +316,13 @@ class ReboilerCondenser:
 
     def __init__(self, name, condenser_vapor_in, condenser_liquid_out, reboiler_liquid_in, reboiler_liquid_out, reboiler_vapor_out, T_cold_pinch):
         self.name = name
+        self.state_dependencies = (
+            condenser_vapor_in,
+            condenser_liquid_out,
+            reboiler_liquid_in,
+            reboiler_liquid_out,
+            reboiler_vapor_out,
+        )
         self.condenser_vapor_in = condenser_vapor_in
         self.condenser_liquid_out = condenser_liquid_out
         self.reboiler_liquid_in = reboiler_liquid_in
@@ -364,6 +378,7 @@ class O2Specification:
             raise ValueError('purity_target must be between 0 and 1')
 
         self.name = name
+        self.state_dependencies = (o2_product,)
         self.o2_product = o2_product
         self.purity_target = purity_target
 
@@ -385,6 +400,7 @@ class Splitter:
 
     def __init__(self, name, inlet, outlet1, outlet2, split_fraction=None):
         self.name = name
+        self.state_dependencies = (inlet, outlet1, outlet2)
         self.inlet = inlet
         self.outlet1 = outlet1
         self.outlet2 = outlet2
@@ -423,7 +439,12 @@ class Mod_MSHX:
     by selected streams as ``Q``."""
 
     def __init__(self, name, pressure_drop_percent, stream_pairs, fixed_temperatures=None, approaches=None, hot_streams=None,):
+        state_dependencies = []
+        for inlet, outlet in stream_pairs:
+            state_dependencies.extend([inlet, outlet])
+
         self.name = name
+        self.state_dependencies = tuple(state_dependencies)
         self.pressure_drop_percent = pressure_drop_percent
         self.stream_pairs = stream_pairs
         self.fixed_temperatures = [] if fixed_temperatures is None else fixed_temperatures
@@ -465,6 +486,7 @@ class Valve:
 
     def __init__(self, name, P_out, inlet, outlet):
         self.name = name
+        self.state_dependencies = (inlet, outlet)
         self.P_out = P_out
         self.inlet = inlet
         self.outlet = outlet
@@ -488,7 +510,16 @@ class Tray:
     """Equilibrium stage with liquid and vapor outlet streams."""
 
     def __init__(self, name, P, liquid_in, vapor_in, liquid_out, vapor_out, feeds):
+        state_dependencies = []
+        if liquid_in is not None:
+            state_dependencies.append(liquid_in)
+        if vapor_in is not None:
+            state_dependencies.append(vapor_in)
+        state_dependencies.extend(feeds)
+        state_dependencies.extend([liquid_out, vapor_out])
+
         self.name = name
+        self.state_dependencies = tuple(state_dependencies)
         self.P = P
         self.liquid_in = liquid_in
         self.vapor_in = vapor_in
