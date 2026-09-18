@@ -172,6 +172,72 @@ class Mixer:
         return eqs
 
 
+class Combustor:
+    """Adiabatic complete combustion of a hydrocarbon fuel."""
+
+    def __init__(self, name, fuel, oxidant, outlet, excess_o2=None):
+        self.name = name
+        self.fuel = fuel
+        self.oxidant = oxidant
+        self.outlet = outlet
+        self.excess_o2 = excess_o2
+        self.state_dependencies = (fuel, oxidant, outlet)
+
+    def residuals(self):
+        fuel = self.fuel
+        oxidant = self.oxidant
+        outlet = self.outlet
+
+        _, fuel_molar_flow, carbon_flow, hydrogen_flow = (utils.stoichiometry(fuel))
+        stoichiometric_o2 = carbon_flow + hydrogen_flow/4.0
+        oxidant_molar_flow = oxidant.m_dot/oxidant.molar_mass
+
+        fuel_flows = {}
+        for species, zi in zip(fuel.species, fuel.z):
+            fuel_flows[species] = fuel_molar_flow*zi
+
+        oxidant_flows = {}
+        for species, zi in zip(oxidant.species, oxidant.z):
+            oxidant_flows[species] = oxidant_molar_flow*zi
+
+        product_flows = {}
+        for species in outlet.species:
+            inlet_flow = (fuel_flows.get(species, 0.0) + oxidant_flows.get(species, 0.0))
+
+            if species is utils.CO2:
+                product_flows[species] = inlet_flow + carbon_flow
+            elif species is utils.H2O:
+                product_flows[species] = inlet_flow + hydrogen_flow/2.0
+            elif species is utils.O2:
+                product_flows[species] = inlet_flow - stoichiometric_o2
+            else:
+                product_flows[species] = inlet_flow
+
+        total_product_flow = sum(product_flows.values())
+
+        product_z = {}
+        for species, flow in product_flows.items():
+            product_z[species] = flow/total_product_flow
+
+        eqs = []
+        if self.excess_o2 is not None:
+            o2_index = oxidant.species.index(utils.O2)
+            target_o2 = self.excess_o2*stoichiometric_o2/oxidant_molar_flow
+            eqs.append((oxidant.z[o2_index] - target_o2)*z_mult)
+
+        eqs.append((outlet.m_dot - fuel.m_dot - oxidant.m_dot)*m_mult)
+        eqs.append((outlet.P - oxidant.P)*P_mult)
+
+        for species, zi in zip(outlet.species[:-1], outlet.z[:-1]):
+            eqs.append((zi - product_z[species])*z_mult)
+
+        enthalpy_in = fuel.m_dot*fuel.h + oxidant.m_dot*oxidant.h
+        enthalpy_out = outlet.m_dot*outlet.h
+        eqs.append((enthalpy_in - enthalpy_out)*H_mult)
+
+        return eqs
+
+
 class Compressor:
     """Adiabatic gas compressor with an exact gas isentropic flash."""
 

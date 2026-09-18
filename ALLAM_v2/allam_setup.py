@@ -13,10 +13,10 @@ from common.classes import (
     Compressor,
     Pump,
     Mod_MSHX,
-    O2Specification,
-    ReboilerCondenser,
     Splitter,
+    Mixer,
     State,
+    Combustor,
     Turbine,
     Valve,
 )
@@ -128,12 +128,13 @@ def build_cycle():
         T = O2_TEMP,
         P = P_MAX,
         z = np.array(O2_MOLE_FRACTIONS),
+        phase = 'vapor',
     )
     states[o2_inlet_stream.name] = o2_inlet_stream
 
     o2_inlet = Input(
         name = 'O2 Inlet',
-        m_dot = m_o2_stream,  # Kg/s (Temporary)
+        m_dot = 30,  # Kg/s (Temporary)
         T = O2_TEMP,
         P = P_MAX,
         z = np.array(O2_MOLE_FRACTIONS),
@@ -272,6 +273,126 @@ def build_cycle():
     )
     components[co2_recycle_splitter.name] = co2_recycle_splitter
 
+    oxidant = State(
+        name = 'Oxidant',
+        species = PRODUCT_SPECIES,
+        m_dot = 266,  # Kg/s
+        T = 309,  # K
+        P = P_MAX,
+        z = np.array([0.8700, 0.0001, 0.1200, 0.0001, 0.0098]),
+        phase = 'liquid',
+    )
+    states[oxidant.name] = oxidant
+
+    oxidant_mixer = Mixer(
+        name = 'Oxidant mixer',
+        inlets = [co2_combustion, o2_inlet_stream],
+        outlet = oxidant,
+    )
+    components[oxidant_mixer.name] = oxidant_mixer
+
+    heated_oxidant = State(
+        name = 'Heated Oxidant',
+        species = PRODUCT_SPECIES,
+        m_dot = 266,  # Kg/s
+        T = 800,  # K
+        P = P_MAX,
+        z = np.array([0.8700, 0.0001, 0.1200, 0.0001, 0.0098]),
+        phase = 'vapor',
+    )
+    states[heated_oxidant.name] = heated_oxidant
+
+    heated_co2_dilution = State(
+        name = 'Heated Dilution CO2',
+        species = PRODUCT_SPECIES,
+        m_dot = 210,  # Kg/s
+        T = 1000,  # K
+        P = P_MAX,
+        z = np.array([0.9990, 0.0007, 0.0001, 0.0001, 0.0001]),
+        phase = 'vapor',
+    )
+    states[heated_co2_dilution.name] = heated_co2_dilution
+
+    heated_co2_cooling = State(
+        name = 'Heated Cooling CO2',
+        species = PRODUCT_SPECIES,
+        m_dot = 25,  # Kg/s
+        T = COOLANT_TEMP,
+        P = P_MAX,
+        z = np.array([0.9990, 0.0007, 0.0001, 0.0001, 0.0001]),
+        phase = 'vapor',
+    )
+    states[heated_co2_cooling.name] = heated_co2_cooling
+
+    lp_turbine_outlet = State(
+        name = 'LP Turbine Outlet',
+        species = PRODUCT_SPECIES,
+        m_dot = 400,  # Kg/s
+        T = 1000,  # K
+        P = P_MIN,
+        z = np.array([0.8973, 0.0839, 0.0011, 0.0177, 0.0001]),
+        phase = 'vapor',
+    )
+    states[lp_turbine_outlet.name] = lp_turbine_outlet
+
+    fake_products = Input(
+        name = 'Fake hot products',
+        m_dot = 600,  # Kg/s (Temporary)
+        T = 1200,  # K (Temporary)
+        P = P_MIN,
+        z = np.array([0.8973, 0.0839, 0.0011, 0.0177, 0.0001]),
+        outlet = lp_turbine_outlet,
+    )
+    components[fake_products.name] = fake_products
+
+    flue_gas = State(
+        name = 'Flue Gases',
+        species = PRODUCT_SPECIES,
+        m_dot = 600,  # Kg/s
+        T = 400,  # K
+        P = P_MIN,
+        z = np.array([0.8973, 0.0839, 0.0011, 0.0177, 0.0001]),
+        phase = 'vapor',
+    )
+    states[flue_gas.name] = flue_gas
+
+    # MSHX
+    recuperator = Mod_MSHX(
+        name = 'MSHX Recuperator',
+        pressure_drop_percent = RECUPERATOR_PRESSURE_DROP_PERCENT,
+        stream_pairs = [
+            (lp_turbine_outlet, flue_gas),
+            (oxidant, heated_oxidant),
+            (co2_dilution, heated_co2_dilution),
+            (co2_cooling, heated_co2_cooling),
+        ],
+        approaches = [
+            (lp_turbine_outlet, heated_co2_dilution, RECUPERATOR_PINCH_TEMP),
+        ],
+        fixed_temperatures=[
+            (heated_co2_cooling, COOLANT_TEMP),
+            (flue_gas, FLUE_GAS_OUTLET_TEMP),
+        ],
+    )
+    components[recuperator.name] = recuperator
+
+    combustion_products = State(
+        name = 'Combustion Products',
+        species = PRODUCT_SPECIES,
+        m_dot = 550,  # Kg/s
+        T = 2000,  # K
+        P = P_MAX,
+        z = np.array([0.8973, 0.0839, 0.0011, 0.0177, 0.0001]),
+    )
+    states[combustion_products.name] = combustion_products
+
+    combustor = Combustor(
+        name = 'Combustor',
+        fuel = compressed_fuel,
+        oxidant = heated_oxidant,
+        outlet = combustion_products,
+    )
+    components[combustor.name] = combustor
 
     x0 = np.asarray([
         value

@@ -134,14 +134,13 @@ def results_table(states):
             'molar mass (kg/mol)': round(state.molar_mass, 9),
         }
 
-        for species, mole_fraction, mass_fraction in zip(
-            state.species,
-            state.z,
-            state.w,
-        ):
+        for species, mole_fraction in zip(state.species, state.z):
             row[f'z_{species.name}'] = round(mole_fraction, 8)
-            row[f'w_{species.name}'] = round(mass_fraction, 8)
 
         results[state.name] = row
 
-    return pd.DataFrame.from_dict(results, orient='index').rename_axis('State')
+    return (
+        pd.DataFrame.from_dict(results, orient='index')
+        .fillna(0.0)
+        .rename_axis('State')
+    )

@@ -4,6 +4,48 @@ import CoolProp.CoolProp as CP
 import numpy as np
 from scipy.optimize import brentq
 
+from common import utils
+
+
+T_REF = 298.15  # K
+P_REF = 101325  # Pa
+
+# Standard molar formation enthalpies at 298.15 K and 101325 Pa (J/mol).
+FORMATION_ENTHALPIES = {
+    'CO2': -393520.0,
+    'H2O': -285830.0,
+    'O2': 0.0,
+    'N2': 0.0,
+    'AR': 0.0,
+    'CH4': -74600.0,
+    'C2H6': -83800.0,
+    'C3H8': -104700.0,
+}
+
+
+def _configure_reference_states():
+    """Set a common CoolProp reference before creating any HEOS states."""
+    for species in utils.ALL_SPECIES:
+        CP.set_reference_state(species.fluid, 'DEF')
+
+    for species in utils.ALL_SPECIES:
+        molar_density = CP.PropsSI(
+            'Dmolar',
+            'T', T_REF,
+            'P', P_REF,
+            species.fluid,
+        )
+        CP.set_reference_state(
+            species.fluid,
+            T_REF,
+            molar_density,
+            FORMATION_ENTHALPIES[species.name],
+            0.0,
+        )
+
+
+_configure_reference_states()
+
 
 PHASE_NAMES = {
     CP.iphase_liquid: 'liquid',

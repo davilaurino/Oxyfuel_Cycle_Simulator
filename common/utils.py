@@ -3,9 +3,6 @@ from dataclasses import dataclass
 from scipy.constants import R
 import numpy as np
 
-T_ref = 298.15
-P_ref = 101325
-
 MW_CO2  = PropsSI('M', 'CarbonDioxide')
 MW_H2O  = PropsSI('M', 'Water')
 MW_O2   = PropsSI('M', 'Oxygen')
@@ -14,34 +11,6 @@ MW_AR   = PropsSI('M', 'Argon')
 MW_CH4  = PropsSI('M', 'Methane')
 MW_C2H6 = PropsSI('M', 'Ethane')
 MW_C3H8 = PropsSI('M', 'Propane')
-
-h_ref_CO2 = PropsSI('H', 'P', P_ref, 'T', T_ref, 'CarbonDioxide')
-h_ref_H2O = PropsSI('H', 'P', P_ref, 'T', T_ref, 'Water')
-h_ref_O2  = PropsSI('H', 'P', P_ref, 'T', T_ref, 'Oxygen')
-h_ref_N2  = PropsSI('H', 'P', P_ref, 'T', T_ref, 'Nitrogen')
-h_ref_AR  = PropsSI('H', 'P', P_ref, 'T', T_ref, 'Argon')
-h_ref_CH4  = PropsSI('H', 'P', P_ref, 'T', T_ref, 'Methane')
-h_ref_C2H6 = PropsSI('H', 'P', P_ref, 'T', T_ref, 'Ethane')
-h_ref_C3H8 = PropsSI('H', 'P', P_ref, 'T', T_ref, 'Propane')
-
-s_ref_CO2 = PropsSI('S', 'P', P_ref, 'T', T_ref, 'CarbonDioxide')
-s_ref_H2O = PropsSI('S', 'P', P_ref, 'T', T_ref, 'Water')
-s_ref_O2  = PropsSI('S', 'P', P_ref, 'T', T_ref, 'Oxygen')
-s_ref_N2  = PropsSI('S', 'P', P_ref, 'T', T_ref, 'Nitrogen')
-s_ref_AR  = PropsSI('S', 'P', P_ref, 'T', T_ref, 'Argon')
-s_ref_CH4  = PropsSI('S', 'P', P_ref, 'T', T_ref, 'Methane')
-s_ref_C2H6 = PropsSI('S', 'P', P_ref, 'T', T_ref, 'Ethane')
-s_ref_C3H8 = PropsSI('S', 'P', P_ref, 'T', T_ref, 'Propane')
-
-# NIST Formation Enthalpies
-h_form_CH4  = -74600/MW_CH4
-h_form_C2H6 = -83800/MW_C2H6
-h_form_C3H8 = -104700/MW_C3H8
-h_form_CO2  = -393520/MW_CO2
-h_form_H2O  = -285830/MW_H2O
-h_form_O2   = 0
-h_form_N2   = 0
-h_form_AR   = 0
 
 Tc_CO2 = PropsSI('Tcrit', 'PR::CarbonDioxide')
 Tc_H2O = PropsSI('Tcrit', 'PR::Water')
@@ -77,9 +46,6 @@ class Species:
     name: str
     fluid: str
     MW: float
-    h_ref: float
-    h_form: float
-    s_ref: float
     Tc: float
     Pc: float
     omega: float
@@ -87,14 +53,14 @@ class Species:
     n_C: int = 0
     n_H: int = 0
 
-CO2  = Species('CO2',  'CarbonDioxide', MW_CO2,  h_ref_CO2,  h_form_CO2,  s_ref_CO2,  Tc_CO2,  Pc_CO2,  omega_CO2)
-H2O  = Species('H2O',  'Water',         MW_H2O,  h_ref_H2O,  h_form_H2O,  s_ref_H2O,  Tc_H2O,  Pc_H2O,  omega_H2O)
-O2   = Species('O2',   'Oxygen',        MW_O2,   h_ref_O2,   h_form_O2,   s_ref_O2,   Tc_O2,   Pc_O2,   omega_O2)
-N2   = Species('N2',   'Nitrogen',      MW_N2,   h_ref_N2,   h_form_N2,   s_ref_N2,   Tc_N2,   Pc_N2,   omega_N2)
-AR   = Species('AR',   'Argon',         MW_AR,   h_ref_AR,   h_form_AR,   s_ref_AR,   Tc_Ar,   Pc_Ar,   omega_Ar)
-CH4  = Species('CH4',  'Methane',       MW_CH4,  h_ref_CH4,  h_form_CH4,  s_ref_CH4,  Tc_CH4,  Pc_CH4,  omega_CH4, LHV=50.05e6, n_C=1, n_H=4)
-C2H6 = Species('C2H6', 'Ethane',        MW_C2H6, h_ref_C2H6, h_form_C2H6, s_ref_C2H6, Tc_C2H6, Pc_C2H6, omega_C2H6, LHV=47.52e6, n_C=2, n_H=6)
-C3H8 = Species('C3H8', 'Propane',       MW_C3H8, h_ref_C3H8, h_form_C3H8, s_ref_C3H8, Tc_C3H8, Pc_C3H8, omega_C3H8, LHV=46.34e6, n_C=3, n_H=8)
+CO2  = Species('CO2',  'CarbonDioxide', MW_CO2,  Tc_CO2,  Pc_CO2,  omega_CO2)
+H2O  = Species('H2O',  'Water',         MW_H2O,  Tc_H2O,  Pc_H2O,  omega_H2O)
+O2   = Species('O2',   'Oxygen',        MW_O2,   Tc_O2,   Pc_O2,   omega_O2)
+N2   = Species('N2',   'Nitrogen',      MW_N2,   Tc_N2,   Pc_N2,   omega_N2)
+AR   = Species('AR',   'Argon',         MW_AR,   Tc_Ar,   Pc_Ar,   omega_Ar)
+CH4  = Species('CH4',  'Methane',       MW_CH4,  Tc_CH4,  Pc_CH4,  omega_CH4, LHV=50.05e6, n_C=1, n_H=4)
+C2H6 = Species('C2H6', 'Ethane',        MW_C2H6, Tc_C2H6, Pc_C2H6, omega_C2H6, LHV=47.52e6, n_C=2, n_H=6)
+C3H8 = Species('C3H8', 'Propane',       MW_C3H8, Tc_C3H8, Pc_C3H8, omega_C3H8, LHV=46.34e6, n_C=3, n_H=8)
 
 SPS = {
     'CO2': CO2,
@@ -121,11 +87,6 @@ def ylny(y):
     else:
         t = 0
     return t
-
-def flow_exergy(m_dot, h, s, T0=T_ref):
-    B = m_dot*(h - T0*s)
-    
-    return B
 
 def y_H2O_sat(T, P):
     P_sat = PropsSI('P', 'T', T, 'Q', 0, 'Water')

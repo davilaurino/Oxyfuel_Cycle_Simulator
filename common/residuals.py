@@ -18,7 +18,7 @@ def evaluate_residuals(variables, states, components, start=None, counter=None):
 
     eqs = np.array(eqs)
 
-    if counter is not None and counter[0] % 200 == 0:
+    if counter is not None and counter[0] % 50 == 0:
         print('-'*20)
         run = time.perf_counter() - start
         print('Run Time:', round(run, 2), '(s)')

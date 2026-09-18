@@ -12,6 +12,7 @@ from math import log, sqrt
 import numpy as np
 
 from common import utils
+from common import thermo as common_thermo  # Configure CoolProp references.
 
 KIJ = {
     frozenset(('CO2', 'H2O')): 0.152780,
@@ -117,13 +118,8 @@ def heos_mixture_properties(T, P, y, species, phase):
 
     state.update(CP.PT_INPUTS, P, T)
 
-    _, x = utils.mass_fraction(fractions, active_species)
-    h = state.hmass() + sum(
-        xi*(sp.h_form - sp.h_ref) for xi, sp in zip(x, active_species)
-    )
-    s = state.smass() - sum(
-        xi*sp.s_ref for xi, sp in zip(x, active_species)
-    )
+    h = state.hmass()
+    s = state.smass()
 
     return h, s
 
@@ -277,7 +273,7 @@ def mixture_enthalpy(T, P, y, species, include_excess=True):
     pairs = list(zip(x, species))
     h = 0
     for (xi, sp) in pairs:
-        h += xi*(PropsSI('H', 'P', P, 'T', T, sp.fluid) - sp.h_ref + sp.h_form)
+        h += xi*PropsSI('H', 'P', P, 'T', T, sp.fluid)
 
     if include_excess:
         h_excess, _ = calculate_pr_excess(T, P, y, species)
@@ -294,7 +290,7 @@ def mixture_entropy(T, P, y, species, include_excess=True):
 
     s = s_mix
     for (xi, sp) in pairs:
-        s += xi*(PropsSI('S', 'P', P, 'T', T, sp.fluid) - sp.s_ref)
+        s += xi*PropsSI('S', 'P', P, 'T', T, sp.fluid)
 
     if include_excess:
         _, s_excess = calculate_pr_excess(T, P, y, species)
