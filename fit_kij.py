@@ -7,7 +7,7 @@ from scipy.constants import R
 from scipy.optimize import minimize_scalar
 
 import thermo
-import utils
+from common import utils
 
 
 TP_PAIRS = [

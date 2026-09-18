@@ -11,7 +11,7 @@ from scipy.optimize import minimize_scalar
 from math import log, sqrt
 import numpy as np
 
-import utils
+from common import utils
 
 KIJ = {
     frozenset(('CO2', 'H2O')): 0.152780,

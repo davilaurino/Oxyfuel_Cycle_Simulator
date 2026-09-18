@@ -1,9 +1,7 @@
-"""Process and thermodynamic state classes for the ASU model."""
+"""Process components and thermodynamic state classes."""
 
-import CoolProp.CoolProp as CP
 import numpy as np
-from scipy.optimize import brentq
-import utils
+from common import utils
 
 from ASU.asu_config import (
     COMPOSITION_SCALE,
@@ -13,6 +11,13 @@ from ASU.asu_config import (
     SPECIFIC_ENTHALPY_SCALE,
     TEMPERATURE_SCALE,
 )
+from common.thermo import (
+    new_heos,
+    ps_flash_enthalpy,
+    ps_gas_enthalpy,
+    ps_liquid_enthalpy,
+    update_state,
+)
 
 # Residual scaling factors.
 H_mult = 1.0/ENERGY_SCALE
@@ -21,24 +26,6 @@ m_mult = 1.0/FLOW_SCALE
 T_mult = 1.0/TEMPERATURE_SCALE
 P_mult = 1.0/PRESSURE_SCALE
 z_mult = 1.0/COMPOSITION_SCALE
-
-PHASE_NAMES = {
-    CP.iphase_liquid: 'liquid',
-    CP.iphase_gas: 'vapor',
-    CP.iphase_twophase: 'two-phase',
-    CP.iphase_supercritical: 'supercritical',
-    CP.iphase_supercritical_liquid: 'supercritical liquid',
-    CP.iphase_supercritical_gas: 'supercritical vapor',
-    CP.iphase_critical_point: 'critical point',
-    CP.iphase_unknown: 'unknown',
-}
-
-
-def new_heos(species):
-    """Create a reusable HEOS state for a list of species."""
-    fluids = '&'.join(sp.fluid for sp in species)
-    return CP.AbstractState('HEOS', fluids)
-
 
 class State:
     """A process stream backed by a reusable CoolProp HEOS state.
@@ -53,17 +40,17 @@ class State:
             raise ValueError("State phase must be None, 'liquid', or 'vapor'")
 
         self.species = []
-        for species_name in species:
-                self.species.append(utils.SPS[species_name])
+        for species_item in species:
+            if isinstance(species_item, str):
+                species_object = utils.SPS[species_item]
+            elif isinstance(species_item, utils.Species):
+                species_object = species_item
+
+            self.species.append(species_object)
 
         self.imposed_phase = phase
-        self.w = np.zeros(len(self.species))
-        if self.imposed_phase in ('liquid', 'vapor'):
-            self.phi = np.zeros(len(self.species))
-        else:
-            self.phi = None
 
-        self.heos = new_heos(self.species)
+        self.thermo_state = new_heos(self.species)
         self.update(m_dot, T, P, z)
 
     def flatten_vars(self):
@@ -78,9 +65,7 @@ class State:
 
         n_composition = len(self.z) - 1
         z = self.z.copy()
-        z[:-1] = variables[
-            start_idx + 3:start_idx + 3 + n_composition
-        ]
+        z[:-1] = variables[start_idx + 3:start_idx + 3 + n_composition]
         z[-1] = 1.0 - np.sum(z[:-1])
 
         self.update(m_dot, T, P, z)
@@ -94,29 +79,22 @@ class State:
         self.P = P
         self.z = np.array(z, dtype=float, copy=True)
 
-        self.heos.set_mole_fractions(self.z)
-        if self.imposed_phase == 'liquid':
-            self.heos.specify_phase(CP.iphase_liquid)
-        elif self.imposed_phase == 'vapor':
-            self.heos.specify_phase(CP.iphase_gas)
-        else:
-            self.heos.unspecify_phase()
-
-        self.heos.update(CP.PT_INPUTS, self.P, self.T)
-
-        self.phase = PHASE_NAMES.get(self.heos.phase(), 'unknown')
-        self.h = self.heos.hmass()
-        self.s = self.heos.smass()
-        self.molar_mass = self.heos.molar_mass()
-
-        for i, (z_i, sp) in enumerate(zip(self.z, self.species)):
-            self.w[i] = z_i*sp.MW/self.molar_mass
-
-        self.vapor_fraction = self.heos.Q()
-        if self.imposed_phase in ('liquid', 'vapor'):
-            for i in range(len(self.species)):
-                self.phi[i] = self.heos.fugacity_coefficient(i)
-
+        (
+            self.phase,
+            self.h,
+            self.s,
+            self.molar_mass,
+            self.w,
+            self.vapor_fraction,
+            self.phi,
+        ) = update_state(
+            self.thermo_state,
+            self.species,
+            self.T,
+            self.P,
+            self.z,
+            self.imposed_phase,
+        )
 
 class Input:
     """Fixed inlet conditions applied to an outlet process stream."""
@@ -146,6 +124,54 @@ class Input:
         return eqs
 
 
+class Mixer:
+    """Adiabatically mix two or more inlet streams into one outlet stream.
+
+    The outlet pressure is set to the lowest inlet pressure, the outlet
+    composition is obtained from the inlet molar flows, and the outlet
+    temperature is determined by the enthalpy balance.
+    """
+
+    def __init__(self, name, inlets, outlet):
+        inlets = tuple(inlets)
+
+        self.name = name
+        self.inlets = inlets
+        self.outlet = outlet
+        self.state_dependencies = (*inlets, outlet)
+
+    def residuals(self):
+        eqs = []
+        outlet = self.outlet
+
+        species_molar_flows = {}
+        total_molar_flow = 0.0
+        for species in outlet.species:
+            species_molar_flows[species] = 0.0
+            
+        for inlet in self.inlets:
+            inlet_molar_flow = inlet.m_dot/inlet.molar_mass
+            total_molar_flow += inlet_molar_flow
+
+            for species, fraction in zip(inlet.species, inlet.z):
+                species_molar_flows[species] += inlet_molar_flow*fraction
+
+        outlet_z = []
+        for species in outlet.species:
+            outlet_z.append(species_molar_flows[species]/total_molar_flow)
+
+        eqs.append((outlet.m_dot - sum(inlet.m_dot for inlet in self.inlets))*m_mult)
+        eqs.append((outlet.P - min(inlet.P for inlet in self.inlets))*P_mult)
+
+        inlet_enthalpy_flow = sum(inlet.m_dot*inlet.h for inlet in self.inlets)
+        eqs.append((outlet.m_dot*outlet.h - inlet_enthalpy_flow)*H_mult)
+
+        for i in range(len(outlet.z) - 1):
+            eqs.append((outlet.z[i] - outlet_z[i])*z_mult)
+
+        return eqs
+
+
 class Compressor:
     """Adiabatic gas compressor with an exact gas isentropic flash."""
 
@@ -158,14 +184,7 @@ class Compressor:
         self.outlet = outlet
         self.W = None
 
-        self.heos = new_heos(inlet.species)
-
-    def isentropic_enthalpy(self, P, s, z):
-        self.heos.set_mole_fractions(z)
-        self.heos.unspecify_phase()
-        self.heos.specify_phase(CP.iphase_gas)
-        self.heos.update(CP.PSmass_INPUTS, P, s)
-        return self.heos.hmass()
+        self.thermo_state = new_heos(inlet.species)
 
     def residuals(self):
         eqs = []
@@ -179,7 +198,7 @@ class Compressor:
         for i in range(len(inlet.z) - 1):
             eqs.append((outlet.z[i] - inlet.z[i])*z_mult)
 
-        h_iso = self.isentropic_enthalpy(P_out, inlet.s, outlet.z)
+        h_iso = ps_gas_enthalpy(self.thermo_state, P_out, inlet.s, outlet.z)
         eqs.append(((outlet.h - inlet.h) - (h_iso - inlet.h)/self.efficiency)*h_mult)
 
         self.W = inlet.m_dot*(inlet.h - outlet.h)
@@ -198,29 +217,7 @@ class Turbine:
         self.outlet = outlet
         self.W = None
 
-        self.heos = new_heos(inlet.species)
-
-    def isentropic_enthalpy(self, P, s, z):
-        self.heos.set_mole_fractions(z)
-        self.heos.unspecify_phase()
-
-        self.heos.update(CP.PQ_INPUTS, P, 1.0)
-        s_dew = self.heos.smass()
-
-        if s >= s_dew:
-            self.heos.specify_phase(CP.iphase_gas)
-            self.heos.update(CP.PSmass_INPUTS, P, s)
-            return self.heos.hmass()
-
-        def entropy_residual(Q):
-            self.heos.unspecify_phase()
-            self.heos.update(CP.PQ_INPUTS, P, Q)
-            return self.heos.smass() - s
-
-        Q = brentq(entropy_residual, 0.0, 1.0)
-        self.heos.unspecify_phase()
-        self.heos.update(CP.PQ_INPUTS, P, Q)
-        return self.heos.hmass()
+        self.thermo_state = new_heos(inlet.species)
 
     def residuals(self):
         eqs = []
@@ -233,15 +230,15 @@ class Turbine:
         for i in range(len(inlet.z) - 1):
             eqs.append((outlet.z[i] - inlet.z[i])*z_mult)
 
-        h_iso = self.isentropic_enthalpy(self.P_out, inlet.s, inlet.z)
+        h_iso = ps_flash_enthalpy(self.thermo_state, self.P_out, inlet.s, inlet.z)
         eqs.append(((inlet.h - outlet.h) - self.efficiency*(inlet.h - h_iso))*h_mult)
 
         self.W = inlet.m_dot*(inlet.h - outlet.h)
         return eqs
 
 
-class LOXPump:
-    """Liquid-oxygen pump with an exact liquid isentropic reference state."""
+class Pump:
+    """Liquid-phase pump with an exact liquid isentropic reference state."""
 
     def __init__(self, name, efficiency, P_out, inlet, outlet):
         self.name = name
@@ -253,16 +250,9 @@ class LOXPump:
         self.W = None
 
         if inlet.imposed_phase != 'liquid' or outlet.imposed_phase != 'liquid':
-            raise ValueError('LOXPump requires liquid-imposed inlet and outlet states')
+            raise ValueError('Pump requires liquid-imposed inlet and outlet states')
 
-        self.heos = new_heos(inlet.species)
-
-    def isentropic_enthalpy(self, P, s, z):
-        self.heos.set_mole_fractions(z)
-        self.heos.unspecify_phase()
-        self.heos.specify_phase(CP.iphase_liquid)
-        self.heos.update(CP.PSmass_INPUTS, P, s)
-        return self.heos.hmass()
+        self.thermo_state = new_heos(inlet.species)
 
     def residuals(self):
         eqs = []
@@ -275,7 +265,7 @@ class LOXPump:
         for i in range(len(inlet.z) - 1):
             eqs.append((outlet.z[i] - inlet.z[i])*z_mult)
 
-        h_iso = self.isentropic_enthalpy(self.P_out, inlet.s, inlet.z)
+        h_iso = ps_liquid_enthalpy(self.thermo_state, self.P_out, inlet.s, inlet.z)
         eqs.append(((outlet.h - inlet.h) - (h_iso - inlet.h)/self.efficiency)*h_mult)
 
         self.W = inlet.m_dot*(inlet.h - outlet.h)
@@ -292,7 +282,7 @@ class Intercooler:
         self.pressure_drop_percent = pressure_drop_percent
         self.inlet = inlet
         self.outlet = outlet
-        self.Q = None
+        self.Q_ext = None
 
     def residuals(self):
         eqs = []
@@ -307,7 +297,7 @@ class Intercooler:
         for i in range(len(inlet.z) - 1):
             eqs.append((outlet.z[i] - inlet.z[i])*z_mult)
 
-        self.Q = inlet.m_dot*(outlet.h - inlet.h)
+        self.Q_ext = inlet.m_dot*(outlet.h - inlet.h)
         return eqs
 
 
@@ -396,34 +386,106 @@ class O2Specification:
 
 
 class Splitter:
-    """Divide one process stream into two streams without separation."""
+    """Divide one process stream into any number of streams without separation.
 
-    def __init__(self, name, inlet, outlet1, outlet2, split_fraction=None):
+    ``outlets`` is a sequence containing the output states.  Flow allocation
+    is optional; when omitted, only the total mass balance is enforced.
+
+    Flow allocation can be specified in one of three ways:
+
+    * ``split_fractions``: fractions for all outlets, summing to one;
+    * ``split_ratios``: relative weights for all outlets, normalized internally;
+    * ``outlet_flows``: fixed mass flows with exactly one ``None`` outlet,
+      which receives the remaining flow.
+
+    Only ``len(outlets) - 1`` flow equations are added; the total mass balance
+    determines the final outlet flow.
+    """
+
+    def __init__(
+        self,
+        name,
+        inlet,
+        outlets,
+        split_fractions=None,
+        split_ratios=None,
+        outlet_flows=None,
+    ):
+        outlets = list(outlets)
+
+        if len(outlets) < 2 or any(outlet is None for outlet in outlets):
+            raise ValueError('Splitter requires at least two valid outlets')
+
+        specifications = [
+            split_fractions is not None,
+            split_ratios is not None,
+            outlet_flows is not None,
+        ]
+
+        if sum(specifications) > 1:
+            raise ValueError(
+                'Use only one of split_fractions, '
+                'split_ratios, or outlet_flows'
+            )
+
         self.name = name
-        self.state_dependencies = (inlet, outlet1, outlet2)
         self.inlet = inlet
-        self.outlet1 = outlet1
-        self.outlet2 = outlet2
-        self.split_fraction = split_fraction
+        self.outlets = tuple(outlets)
+        self.state_dependencies = (inlet, *self.outlets)
+
+        self._flow_targets = {}
+        if split_fractions is not None:
+            if len(split_fractions) != len(self.outlets):
+                raise ValueError('split_fractions must match outlet count')
+            fractions = np.asarray(split_fractions, dtype=float)
+            if np.any(fractions < 0.0) or not np.isclose(fractions.sum(), 1.0):
+                raise ValueError('split_fractions must be nonnegative and sum to one')
+            for outlet, fraction in zip(self.outlets[:-1], fractions[:-1]):
+                self._flow_targets[outlet] = ('fraction', fraction)
+
+        elif split_ratios is not None:
+            if len(split_ratios) != len(self.outlets):
+                raise ValueError('split_ratios must match outlet count')
+            ratios = np.asarray(split_ratios, dtype=float)
+            if np.any(ratios < 0.0) or ratios.sum() <= 0.0:
+                raise ValueError('split_ratios must be nonnegative and nonzero')
+            ratios /= ratios.sum()
+            for outlet, fraction in zip(self.outlets[:-1], ratios[:-1]):
+                self._flow_targets[outlet] = ('fraction', fraction)
+
+        elif outlet_flows is not None:
+            if len(outlet_flows) != len(self.outlets):
+                raise ValueError('outlet_flows must match outlet count')
+            if sum(flow is None for flow in outlet_flows) != 1:
+                raise ValueError(
+                    'outlet_flows must contain exactly one None residual outlet'
+                )
+            for outlet, flow in zip(self.outlets, outlet_flows):
+                if flow is not None:
+                    if flow < 0.0:
+                        raise ValueError('outlet flows must be nonnegative')
+                    self._flow_targets[outlet] = ('flow', flow)
 
     def residuals(self):
         eqs = []
         inlet = self.inlet
-        outlet1 = self.outlet1
-        outlet2 = self.outlet2
 
-        if self.split_fraction is not None:
-            eqs.append((outlet1.m_dot - self.split_fraction*inlet.m_dot)*m_mult)
+        for outlet, (kind, target) in self._flow_targets.items():
+            target_flow = (
+                target*inlet.m_dot
+                if kind == 'fraction'
+                else target
+            )
+            eqs.append((outlet.m_dot - target_flow)*m_mult)
 
-        eqs.append((inlet.m_dot - outlet1.m_dot - outlet2.m_dot)*m_mult)
-        eqs.append((outlet1.T - inlet.T)*T_mult)
-        eqs.append((outlet2.T - inlet.T)*T_mult)
-        eqs.append((outlet1.P - inlet.P)*P_mult)
-        eqs.append((outlet2.P - inlet.P)*P_mult)
+        eqs.append((inlet.m_dot - sum(outlet.m_dot for outlet in self.outlets))*m_mult)
 
-        for i in range(len(inlet.z) - 1):
-            eqs.append((outlet1.z[i] - inlet.z[i])*z_mult)
-            eqs.append((outlet2.z[i] - inlet.z[i])*z_mult)
+        for outlet in self.outlets:
+            eqs.append((outlet.T - inlet.T)*T_mult)
+            eqs.append((outlet.P - inlet.P)*P_mult)
+
+            for i in range(len(inlet.z) - 1):
+                eqs.append((outlet.z[i] - inlet.z[i])*z_mult)
 
         return eqs
 

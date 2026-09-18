@@ -1,50 +1,56 @@
-"""Reusable builders for ASU process structures."""
+"""Reusable builders for process structures."""
 
-import CoolProp.CoolProp as CP
 import numpy as np
-import utils
+from common import utils
 
-from ASU.asu_classes import Compressor, Intercooler, State, Tray
-
+from common.classes import Compressor, Intercooler, State, Tray
+from common.thermo import (
+    bubble_point,
+    new_heos,
+    ps_gas_temperature,
+    ps_temperature,
+)
 
 def build_compressor_train(
     name,
     inlet,
-    P_start,
     P_end,
     cooling_temperature,
     n_stages,
     efficiency,
     pressure_drop_percent=0.0,
+    phase='vapor',
+    final_cooler_phase='vapor',
 ):
-    """Create equal-ratio gas-compression stages with cooling after each stage."""
+    """Create equal-ratio compression stages with cooling after each stage.
+
+    The default gas mode preserves the ASU behavior.  A separate phase can be
+    assigned to the final cooler outlet for dense-CO2 cycles.
+    """
     if not isinstance(n_stages, (int, np.integer)) or n_stages < 1:
         raise ValueError('n_stages must be a positive integer')
-    if P_end <= P_start:
-        raise ValueError('P_end must be greater than P_start')
-    if not np.isclose(inlet.P, P_start):
-        raise ValueError('The inlet pressure must match P_start')
+    if P_end <= inlet.P:
+        raise ValueError('P_end must be greater than inlet pressure')
     if not 0.0 < efficiency <= 1.0:
         raise ValueError('efficiency must be greater than 0 and at most 1')
-    if not 0.0 <= pressure_drop_percent < 100.0:
-        raise ValueError('pressure_drop_percent must be between 0 and 100')
 
     states = {}
     components = {}
     stage_inlet = inlet
     species = [sp.name for sp in inlet.species]
+    thermo_state = new_heos(inlet.species)
     cooler_pressure_ratio = 1.0 - pressure_drop_percent/100.0
-    compressor_pressure_ratio = (
-        P_end/(P_start*cooler_pressure_ratio**n_stages)
-    )**(1.0/n_stages)
+    compressor_pressure_ratio = (P_end/(inlet.P*cooler_pressure_ratio**n_stages))**(1.0/n_stages)
 
     for i in range(1, n_stages + 1):
         compressor_pressure = stage_inlet.P*compressor_pressure_ratio
-        # Diatomic ideal-gas estimate used only to initialize the solver.
-        T_iso_guess = stage_inlet.T*compressor_pressure_ratio**(2.0/7.0)
-        compressor_temperature = (
-            stage_inlet.T + (T_iso_guess - stage_inlet.T)/efficiency
+        temperature_flash = (
+            ps_gas_temperature if phase == 'vapor' else ps_temperature
         )
+        T_iso_guess = temperature_flash(
+            thermo_state, compressor_pressure, stage_inlet.s, stage_inlet.z,
+        )
+        compressor_temperature = (stage_inlet.T + (T_iso_guess - stage_inlet.T)/efficiency)
 
         compressor_out = State(
             name = f'{name} - Stage {i} compressor outlet',
@@ -53,7 +59,7 @@ def build_compressor_train(
             T = compressor_temperature,
             P = compressor_pressure,
             z = stage_inlet.z,
-            phase = 'vapor',
+            phase = phase,
         )
         states[compressor_out.name] = compressor_out
 
@@ -66,10 +72,11 @@ def build_compressor_train(
         )
         components[compressor.name] = compressor
 
-        cooler_name = (
-            f'{name} outlet'
+        cooler_name = (f'{name} outlet' if i == n_stages else f'{name} - Stage {i} cooler outlet')
+        cooler_phase = (
+            final_cooler_phase
             if i == n_stages
-            else f'{name} - Stage {i} cooler outlet'
+            else phase
         )
         cooler_out = State(
             name = cooler_name,
@@ -78,7 +85,7 @@ def build_compressor_train(
             T = cooling_temperature,
             P = compressor_pressure*cooler_pressure_ratio,
             z = compressor_out.z,
-            phase = 'vapor',
+            phase = cooler_phase,
         )
         states[cooler_out.name] = cooler_out
 
@@ -109,31 +116,32 @@ def build_column(
     x_bottom,
     feeds,
 ):
+    
     """Create and connect equilibrium trays from top to bottom."""
     pressures = np.linspace(P_top, P_bottom, n_trays)
     liquid_flows = np.linspace(L_top, L_bottom, n_trays)
     vapor_flows = np.linspace(V_top, V_bottom, n_trays)
     liquid_compositions = np.linspace(x_top, x_bottom, n_trays)
 
-    fluid_names = []
+    column_species = []
     for species_name in species:
-        fluid_names.append(utils.SPS[species_name].fluid)
-    equilibrium = CP.AbstractState('HEOS', '&'.join(fluid_names))
+        column_species.append(utils.SPS[species_name])
+    thermo_state = new_heos(column_species)
 
     temperatures = []
     vapor_compositions = []
-    for i in range(n_trays):
-        equilibrium.set_mole_fractions(liquid_compositions[i])
-        equilibrium.update(CP.PQ_INPUTS, pressures[i], 0.0)
-        temperatures.append(equilibrium.T())
-        vapor_compositions.append(equilibrium.mole_fractions_vapor())
+    for pressure, liquid_composition in zip(pressures, liquid_compositions):
+        temperature, vapor_composition = bubble_point(thermo_state, pressure, liquid_composition)
+        temperatures.append(temperature)
+        vapor_compositions.append(vapor_composition)
+        
     states = {}
     components = {}
     liquid_states = []
     vapor_states = []
 
     for i in range(n_trays):
-        tray_name = f'{name} - T{i + 1}'
+        tray_name = f'{name} T{i + 1}'
 
         liquid = State(
             f'{tray_name} - liquid', species, liquid_flows[i],

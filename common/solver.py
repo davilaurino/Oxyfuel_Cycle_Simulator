@@ -1,72 +1,75 @@
-"""Numerical helpers and solver orchestration for the ASU model."""
+"""Numerical helpers and process-model solver orchestration."""
 
 import time
 
 import numpy as np
 from scipy.optimize import fsolve, least_squares
 
-from ASU.asu_classes import (
+from ASU.asu_config import (
     COMPOSITION_SCALE,
+    COMPOSITION_BOUNDS,
+    FD_RELATIVE_STEP,
     FLOW_SCALE,
+    FLOW_BOUNDS,
+    FSOLVE_FACTOR,
+    FSOLVE_MAXFEV,
+    FSOLVE_XTOL,
+    LEAST_SQUARES_FTOL,
+    LEAST_SQUARES_GTOL,
+    LEAST_SQUARES_MAX_NFEV,
+    LEAST_SQUARES_XTOL,
     PRESSURE_SCALE,
+    PRESSURE_BOUNDS,
     TEMPERATURE_SCALE,
-    State,
+    TEMPERATURE_BOUNDS,
 )
-from ASU.asu_cycle_residuals import asu_residuals
+from common.residuals import evaluate_residuals
+from common.thermo import CoolPropFailure
 
 
-def build_variable_scales(states):
+def build_variable_scales(states, config=None):
     """Return fixed engineering scales for each state variable."""
+    if config is None:
+        import ASU.asu_config as config
+
     scales = []
 
     for state in states.values():
         n_composition = len(state.z) - 1
         scales.extend([
-            FLOW_SCALE,
-            TEMPERATURE_SCALE,
-            PRESSURE_SCALE,
-            *([COMPOSITION_SCALE]*n_composition),
+            config.FLOW_SCALE,
+            config.TEMPERATURE_SCALE,
+            config.PRESSURE_SCALE,
+            *([config.COMPOSITION_SCALE]*n_composition),
         ])
 
     return np.array(scales, dtype=float)
 
-def build_bounds(states, components):
+def build_bounds(states, config=None):
     """Return physical bounds for least-squares and Jacobian probes."""
+    if config is None:
+        import ASU.asu_config as config
+
     lower = []
     upper = []
 
     for state in states.values():
         n = len(state.z) - 1
-        lower.extend([1e-3, 60.0, 1e5, *([1e-6]*n)])
-        upper.extend([12.0, 500.0, 1e8, *([1.0 - 1e-6]*n)])
+        lower.extend([
+            config.FLOW_BOUNDS[0],
+            config.TEMPERATURE_BOUNDS[0],
+            config.PRESSURE_BOUNDS[0],
+            *([config.COMPOSITION_BOUNDS[0]]*n),
+        ])
+        upper.extend([
+            config.FLOW_BOUNDS[1],
+            config.TEMPERATURE_BOUNDS[1],
+            config.PRESSURE_BOUNDS[1],
+            *([config.COMPOSITION_BOUNDS[1]]*n),
+        ])
+    return np.array(lower), np.array(upper)
 
-    for component in components.values():
-        n = len(component.flatten_vars())
-        lower.extend([-np.inf]*n)
-        upper.extend([np.inf]*n)
-
-    return np.array(lower, dtype=float), np.array(upper, dtype=float)
-
-def _component_states(component):
-    """Collect State objects referenced by a component."""
-    found = set()
-
-    def visit(value):
-        if isinstance(value, State):
-            found.add(value)
-        elif isinstance(value, dict):
-            for item in value.values():
-                visit(item)
-        elif isinstance(value, (list, tuple)):
-            for item in value:
-                visit(item)
-
-    for value in vars(component).values():
-        visit(value)
-
-    return found
-
-def _color_columns(pattern):
+def color_columns(pattern):
     """Greedily group Jacobian columns whose nonzeros do not share rows."""
     conflicts = pattern.T @ pattern                              # Variable pairs sharing a residual row
     np.fill_diagonal(conflicts, False)                           # A variable does not conflict with itself
@@ -91,53 +94,6 @@ def _color_columns(pattern):
 
     return groups
 
-class ColoredFiniteDifferenceJacobian:
-    """Dense finite-difference Jacobian using sparse column coloring."""
-
-    def __init__(
-        self,
-        function,
-        pattern,
-        relative_step=1.0e-6,
-        lower_bounds=None,
-        upper_bounds=None,
-    ):
-        self.function = function
-        self.pattern = pattern
-        self.relative_step = relative_step
-        self.groups = _color_columns(pattern)
-        self.lower_bounds = lower_bounds
-        self.upper_bounds = upper_bounds
-
-    def __call__(self, variables):
-        base = self.function(variables)
-        jacobian = np.zeros(self.pattern.shape)
-
-        for columns in self.groups:
-            steps = self.relative_step*np.maximum(np.abs(variables[columns]), 1.0)
-
-            if self.upper_bounds is not None:
-                use_backward = (
-                    variables[columns] + steps > self.upper_bounds[columns]
-                )
-                steps[use_backward] *= -1.0
-
-            if self.lower_bounds is not None:
-                use_forward = (
-                    variables[columns] + steps < self.lower_bounds[columns]
-                )
-                steps[use_forward] *= -1.0
-
-            perturbed = variables.copy()
-            perturbed[columns] += steps
-            difference = self.function(perturbed) - base
-
-            for column, step in zip(columns, steps):
-                rows = self.pattern[:, column]
-                jacobian[rows, column] = difference[rows]/step
-
-        return jacobian
-
 def build_jacobian_sparsity(states, components):
     """Build a conservative equation/variable dependency matrix."""
     state_columns = {}
@@ -152,58 +108,90 @@ def build_jacobian_sparsity(states, components):
 
     row = 0
     for component, count in zip(components.values(), row_counts):
-        for state in _component_states(component):
+        for state in component.state_dependencies:
             pattern[row:row + count, state_columns[state]] = True
         row += count
 
-    if pattern.shape[0] != pattern.shape[1]:
-        raise ValueError(f'fsolve requires a square system; Jacobian shape is {pattern.shape}')
-
     return pattern
 
-def solve_asu(states, components, x0, solver='fsolve'):
-    """Solve the ASU and return ``(physical_solution, success)``."""
+class ColoredFiniteDifferenceJacobian:
+    """Dense finite-difference Jacobian using sparse column coloring."""
+
+    def __init__(self, function, pattern, relative_step=1.0e-6, upper_bounds=None):
+        self.function = function
+        self.pattern = pattern
+        self.relative_step = relative_step
+        self.groups = color_columns(pattern)
+        self.upper_bounds = upper_bounds
+
+    def __call__(self, variables):
+        base = self.function(variables)
+        jacobian = np.zeros(self.pattern.shape)
+
+        for columns in self.groups:
+            steps = self.relative_step*np.maximum(np.abs(variables[columns]), 1.0)
+
+            if self.upper_bounds is not None:
+                use_backward = (variables[columns] + steps > self.upper_bounds[columns])
+                steps[use_backward] *= -1.0
+
+            perturbed = variables.copy()
+            perturbed[columns] += steps
+            difference = self.function(perturbed) - base
+
+            for column, step in zip(columns, steps):
+                rows = self.pattern[:, column]
+                jacobian[rows, column] = difference[rows]/step
+
+        return jacobian
+
+def solve(states, components, x0, solver='fsolve', config=None):
+    """Solve a process model and return ``(physical_solution, success)``."""
 
     start = time.perf_counter()
     counter = [0]
 
-    variable_scales = build_variable_scales(states)
+    if config is None:
+        import ASU.asu_config as config
+
+    variable_scales = build_variable_scales(states, config)
     scaled_x0 = x0/variable_scales
 
     def scaled_residuals(scaled_variables):
         try:
-            return asu_residuals(
+            return evaluate_residuals(
                 scaled_variables*variable_scales,
                 states,
                 components,
                 start,
                 counter,
             )
-        except ValueError:
+        except CoolPropFailure:
             # Reject thermodynamically invalid trial points without aborting.
             counter[0] += 1
             return np.full(len(scaled_variables), 1.0e4)
 
+    lower, upper = build_bounds(states, config)
+    lower_scaled = lower/variable_scales
+    upper_scaled = upper/variable_scales
+    jacobian_pattern = build_jacobian_sparsity(states, components)
+    jacobian = ColoredFiniteDifferenceJacobian(
+        scaled_residuals,
+        jacobian_pattern,
+        relative_step=config.FD_RELATIVE_STEP,
+        upper_bounds=upper_scaled,
+    )
+
     if solver == 'least_squares':
-        lower, upper = build_bounds(states, components)
-        lower_scaled = lower/variable_scales
-        upper_scaled = upper/variable_scales
-        jacobian_pattern = build_jacobian_sparsity(states, components)
-        jacobian = ColoredFiniteDifferenceJacobian(
-            scaled_residuals,
-            jacobian_pattern,
-            lower_bounds=lower_scaled,
-            upper_bounds=upper_scaled,
-        )
         result = least_squares(
             scaled_residuals,
             scaled_x0,
             jac=jacobian,
             bounds=(lower_scaled, upper_scaled),
-            xtol=1e-12,
-            gtol=1e-12,
-            ftol=1e-12,
-            max_nfev=200,
+            xtol=config.LEAST_SQUARES_XTOL,
+            gtol=config.LEAST_SQUARES_GTOL,
+            ftol=config.LEAST_SQUARES_FTOL,
+            max_nfev=config.LEAST_SQUARES_MAX_NFEV,
         )
         x_final = result.x*variable_scales
         success = result.success
@@ -211,34 +199,23 @@ def solve_asu(states, components, x0, solver='fsolve'):
         solver_calls = result.nfev
 
     elif solver == 'fsolve':
-        lower, upper = build_bounds(states, components)
-        jacobian_pattern = build_jacobian_sparsity(states, components)
-        jacobian = ColoredFiniteDifferenceJacobian(
-            scaled_residuals,
-            jacobian_pattern,
-            lower_bounds=lower/variable_scales,
-            upper_bounds=upper/variable_scales,
-        )
         scaled_final, info, ier, message = fsolve(
             scaled_residuals,
             scaled_x0,
             fprime=jacobian,
-            xtol=1e-10,
+            xtol=config.FSOLVE_XTOL,
             full_output=True,
-            maxfev=5000,
-            factor=0.1,
+            maxfev=config.FSOLVE_MAXFEV,
+            factor=config.FSOLVE_FACTOR,
         )
         x_final = scaled_final*variable_scales
         success = ier == 1
         solver_calls = info['nfev']
 
-    else:
-        raise ValueError("SOLVER must be 'fsolve' or 'least_squares'")
-
     elapsed = time.perf_counter() - start
 
     # Ensure the model objects contain the returned solution.
-    residuals = asu_residuals(x_final, states, components)
+    residuals = evaluate_residuals(x_final, states, components)
     residual_norm = np.linalg.norm(residuals)
     max_residual = np.max(np.abs(residuals))
 

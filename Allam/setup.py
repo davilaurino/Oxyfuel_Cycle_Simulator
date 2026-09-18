@@ -1,4 +1,4 @@
-import utils as utils
+from common import utils
 from classes import State, Input, Compressor, Pump, Intercooler, Combustor, Mixer, Turbine
 from classes import Splitter, HX_mult, Condensator, Splitter_CO2_3way, CoolantSplitter
 
@@ -37,7 +37,7 @@ MW_fuel, x_fuel = utils.mass_fraction(y_ng, utils.FUEL_SPECIES)
 eta_comp_fuel = 0.85
 pr_comp_fuel  = P_max/P_fuel
 
-LHV_ng = sum(xi * utils.LHV.get(spc.name, 0) for spc, xi in zip(utils.FUEL_SPECIES, x_fuel))
+LHV_ng = sum(xi * spc.LHV for spc, xi in zip(utils.FUEL_SPECIES, x_fuel))
 
 K_cool  = 0.06  # El-Masri cooling coefficient
 T_blade = 1120  # K — blade metal temperature limit

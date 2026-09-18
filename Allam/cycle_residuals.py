@@ -1,4 +1,4 @@
-import utils
+from common import utils
 import thermo
 import time
 import numpy as np

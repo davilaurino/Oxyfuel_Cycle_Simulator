@@ -16,7 +16,7 @@ from scipy.optimize import fsolve
 from Allam.cycle_residuals import allam_residuals
 from classes import Compressor, Turbine, Pump, Intercooler, Condensator
 from Allam.setup import build_cycle
-import utils as utils
+from common import utils
 
 
 def report_heos_diagnostics(S):
@@ -68,7 +68,7 @@ def report(S, Component, LHV_ng, elapsed, verbose=True):
     _, x_O2_input = utils.mass_fraction(O2_input.y, O2_input.spc)
     i_O2 = O2_input.spc.index(utils.SPS['O2'])
     m_dot_O2_pure = O2_input.m_dot*x_O2_input[i_O2]
-    asu_sp_work = utils.asu_work(O2_input.y[i_O2])
+    asu_sp_work = utils.oxygen_separation_work(O2_input.y[i_O2])
     W_asu = -m_dot_O2_pure*asu_sp_work
 
     W_con_total = W_con + W_asu

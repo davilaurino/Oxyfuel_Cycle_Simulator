@@ -1,16 +1,10 @@
 from CoolProp.CoolProp import PropsSI
+from dataclasses import dataclass
 from scipy.constants import R
 import numpy as np
 
 T_ref = 298.15
 P_ref = 101325
-
-# Van Wylen LHV (J/kg)
-LHV = {
-    'CH4': 50.05e6,
-    'C2H6': 47.52e6,
-    'C3H8': 46.34e6,
-}
 
 MW_CO2  = PropsSI('M', 'CarbonDioxide')
 MW_H2O  = PropsSI('M', 'Water')
@@ -76,36 +70,50 @@ omega_CH4 = PropsSI('acentric', 'Methane')
 omega_C2H6 = PropsSI('acentric', 'Ethane')
 omega_C3H8 = PropsSI('acentric', 'Propane')
 
+@dataclass(frozen=True, slots=True)
 class Species:
-    def __init__(self, name, fluid, MW, h_ref, h_form, s_ref, Tc, Pc, omega, n_C=0, n_H=0):
-        self.name = name
-        self.fluid = fluid
-        self.MW = MW
-        self.h_ref = h_ref
-        self.h_form = h_form
-        self.s_ref = s_ref
+    """Immutable thermodynamic and elemental data for one species."""
 
-        self.Tc = Tc
-        self.Pc = Pc
-        self.omega = omega
+    name: str
+    fluid: str
+    MW: float
+    h_ref: float
+    h_form: float
+    s_ref: float
+    Tc: float
+    Pc: float
+    omega: float
+    LHV: float = 0.0
+    n_C: int = 0
+    n_H: int = 0
 
-        self.n_C = n_C
-        self.n_H = n_H
+CO2  = Species('CO2',  'CarbonDioxide', MW_CO2,  h_ref_CO2,  h_form_CO2,  s_ref_CO2,  Tc_CO2,  Pc_CO2,  omega_CO2)
+H2O  = Species('H2O',  'Water',         MW_H2O,  h_ref_H2O,  h_form_H2O,  s_ref_H2O,  Tc_H2O,  Pc_H2O,  omega_H2O)
+O2   = Species('O2',   'Oxygen',        MW_O2,   h_ref_O2,   h_form_O2,   s_ref_O2,   Tc_O2,   Pc_O2,   omega_O2)
+N2   = Species('N2',   'Nitrogen',      MW_N2,   h_ref_N2,   h_form_N2,   s_ref_N2,   Tc_N2,   Pc_N2,   omega_N2)
+AR   = Species('AR',   'Argon',         MW_AR,   h_ref_AR,   h_form_AR,   s_ref_AR,   Tc_Ar,   Pc_Ar,   omega_Ar)
+CH4  = Species('CH4',  'Methane',       MW_CH4,  h_ref_CH4,  h_form_CH4,  s_ref_CH4,  Tc_CH4,  Pc_CH4,  omega_CH4, LHV=50.05e6, n_C=1, n_H=4)
+C2H6 = Species('C2H6', 'Ethane',        MW_C2H6, h_ref_C2H6, h_form_C2H6, s_ref_C2H6, Tc_C2H6, Pc_C2H6, omega_C2H6, LHV=47.52e6, n_C=2, n_H=6)
+C3H8 = Species('C3H8', 'Propane',       MW_C3H8, h_ref_C3H8, h_form_C3H8, s_ref_C3H8, Tc_C3H8, Pc_C3H8, omega_C3H8, LHV=46.34e6, n_C=3, n_H=8)
 
 SPS = {
-    'CO2':  Species('CO2',  'CarbonDioxide', MW_CO2,  h_ref_CO2,  h_form_CO2,  s_ref_CO2,  Tc_CO2,  Pc_CO2,  omega_CO2),
-    'H2O':  Species('H2O',  'Water',         MW_H2O,  h_ref_H2O,  h_form_H2O,  s_ref_H2O,  Tc_H2O,  Pc_H2O,  omega_H2O),
-    'O2':   Species('O2',   'Oxygen',        MW_O2,   h_ref_O2,   h_form_O2,   s_ref_O2,   Tc_O2,   Pc_O2,   omega_O2),
-    'N2':   Species('N2',   'Nitrogen',      MW_N2,   h_ref_N2,   h_form_N2,   s_ref_N2,   Tc_N2,   Pc_N2,   omega_N2),
-    'AR':   Species('AR',   'Argon',         MW_AR,   h_ref_AR,   h_form_AR,   s_ref_AR,   Tc_Ar,   Pc_Ar,   omega_Ar),
-    'CH4':  Species('CH4',  'Methane',       MW_CH4,  h_ref_CH4,  h_form_CH4,  s_ref_CH4,  Tc_CH4,  Pc_CH4,  omega_CH4,  n_C=1, n_H=4),
-    'C2H6': Species('C2H6', 'Ethane',        MW_C2H6, h_ref_C2H6, h_form_C2H6, s_ref_C2H6, Tc_C2H6, Pc_C2H6, omega_C2H6, n_C=2, n_H=6),
-    'C3H8': Species('C3H8', 'Propane',       MW_C3H8, h_ref_C3H8, h_form_C3H8, s_ref_C3H8, Tc_C3H8, Pc_C3H8, omega_C3H8, n_C=3, n_H=8),
+    'CO2': CO2,
+    'H2O': H2O,
+    'O2': O2,
+    'N2': N2,
+    'AR': AR,
+    'CH4': CH4,
+    'C2H6': C2H6,
+    'C3H8': C3H8,
 }
 
-PRODUCT_SPECIES = [SPS['CO2'], SPS['H2O'], SPS['O2'], SPS['N2']]
-FUEL_SPECIES = [SPS['CH4'], SPS['C2H6'], SPS['C3H8'], SPS['CO2']]
-AIR_SPECIES = [SPS['O2'], SPS['N2']]
+# Canonical species groups used by the legacy models.  The tuples contain the
+# same singleton objects exposed above, so identity checks against SPS remain
+# valid while the groups cannot be modified accidentally.
+ALL_SPECIES = (CO2, H2O, O2, N2, AR, CH4, C2H6, C3H8)
+PRODUCT_SPECIES = (CO2, H2O, O2, N2)
+FUEL_SPECIES = (CH4, C2H6, C3H8, CO2)
+AIR_SPECIES = (O2, N2)
 
 def ylny(y):
     if (y>0):
@@ -137,34 +145,34 @@ def mass_fraction(y, species):
     return MW_mix, x
 
 def stoichiometry(S_fuel):
-    MW_fuel, x_fuel = mass_fraction(S_fuel.y, S_fuel.spc)
+    if hasattr(S_fuel, 'species'):
+        fuel_fractions = S_fuel.z
+        fuel_species = S_fuel.species
+    else:
+        fuel_fractions = S_fuel.y
+        fuel_species = S_fuel.spc
+
+    MW_fuel, x_fuel = mass_fraction(fuel_fractions, fuel_species)
     n_fuel = S_fuel.m_dot/MW_fuel
 
     n_C = 0
     n_H = 0
-    for (spc, yi) in zip(S_fuel.spc, S_fuel.y):
+    for (spc, yi) in zip(fuel_species, fuel_fractions):
         n_C += spc.n_C*yi*n_fuel
         n_H += spc.n_H*yi*n_fuel
 
     return MW_fuel, n_fuel, n_C, n_H
 
 def fuel_requirements(S_fuel):
+    """Return stoichiometric O2 mass and molar flow rates."""
     MW_fuel, n_fuel, n_C, n_H = stoichiometry(S_fuel)
     n_O2_sto = n_C + n_H/4
     m_O2_sto = n_O2_sto*SPS['O2'].MW
 
-    n_CO2_fuel = 0
-    for spc, yi in zip(S_fuel.spc, S_fuel.y):
-            if spc is SPS['CO2']:
-                n_CO2_fuel += yi*n_fuel
-        
-    m_CO2_add = (n_C + n_CO2_fuel)*SPS['CO2'].MW
-    m_H2O_add = (n_H/2)*SPS['H2O'].MW
+    return m_O2_sto, n_O2_sto
 
-    return m_CO2_add, m_H2O_add, m_O2_sto
-
-def asu_work(p, work_95=720e3):
-    """Cryogenic-ASU specific work in J/kg_O2 for oxygen mole fraction p."""
+def oxygen_separation_work(p, work_95=720e3):
+    """Cryogenic oxygen-separation work in J/kg_O2 at mole fraction p."""
     purity = 100*p
 
     # CMU/IECM piecewise purity correction, normalized to 95 mol% O2.

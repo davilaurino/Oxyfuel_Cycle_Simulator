@@ -1,5 +1,5 @@
 import numpy as np
-import utils as utils
+from common import utils
 import thermo as thermo
 
 # Scaling factors for residuals
