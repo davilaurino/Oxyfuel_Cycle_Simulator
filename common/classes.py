@@ -556,6 +556,85 @@ class Splitter:
         return eqs
 
 
+class TurbineCoolingSplitter:
+    """Allocate turbine coolant using the El-Masri cooling correlation.
+
+    Each coolant outlet corresponds to one hot-gas turbine inlet.  The
+    required coolant flow for a stage is
+
+    ``K * m_hot * (T_hot - T_blade) / (T_blade - T_coolant)``.
+
+    The inlet flow is therefore determined by the sum of the stage cooling
+    requirements.  As with :class:`Splitter`, temperature, pressure, and
+    composition are unchanged by the split.
+    """
+
+    def __init__(
+        self,
+        name,
+        cooling_coefficient,
+        blade_temperature,
+        inlet,
+        outlets,
+        hot_gas_inlets,
+    ):
+        outlets = tuple(outlets)
+        hot_gas_inlets = tuple(hot_gas_inlets)
+
+        if not outlets or any(outlet is None for outlet in outlets):
+            raise ValueError(
+                'TurbineCoolingSplitter requires at least one valid outlet'
+            )
+        if len(outlets) != len(hot_gas_inlets):
+            raise ValueError(
+                'outlets and hot_gas_inlets must have the same length'
+            )
+        if any(hot_gas_inlet is None for hot_gas_inlet in hot_gas_inlets):
+            raise ValueError(
+                'TurbineCoolingSplitter requires valid hot-gas inlets'
+            )
+        if cooling_coefficient < 0.0:
+            raise ValueError('cooling_coefficient must be nonnegative')
+
+        self.name = name
+        self.cooling_coefficient = cooling_coefficient
+        self.blade_temperature = blade_temperature
+        self.inlet = inlet
+        self.outlets = outlets
+        self.hot_gas_inlets = hot_gas_inlets
+        self.state_dependencies = (inlet, *outlets, *hot_gas_inlets)
+
+    def residuals(self):
+        eqs = []
+        inlet = self.inlet
+        temperature_difference = self.blade_temperature - inlet.T
+
+        required_flows = []
+        for outlet, hot_gas_inlet in zip(
+            self.outlets,
+            self.hot_gas_inlets,
+        ):
+            required_flow = (
+                self.cooling_coefficient
+                * hot_gas_inlet.m_dot
+                * (hot_gas_inlet.T - self.blade_temperature)
+                / temperature_difference
+            )
+            required_flows.append(required_flow)
+            eqs.append((outlet.m_dot - required_flow)*m_mult)
+
+        eqs.append((inlet.m_dot - sum(required_flows))*m_mult)
+
+        for outlet in self.outlets:
+            eqs.append((outlet.T - inlet.T)*T_mult)
+            eqs.append((outlet.P - inlet.P)*P_mult)
+
+            for i in range(len(inlet.z) - 1):
+                eqs.append((outlet.z[i] - inlet.z[i])*z_mult)
+
+        return eqs
+
+
 class Mod_MSHX:
     """Configurable multi-stream heat exchanger.
 

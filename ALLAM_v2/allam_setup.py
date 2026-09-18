@@ -34,6 +34,7 @@ ETA_FUEL_COMPRESSOR = 0.85
 
 ETA_TURBINE = 0.92
 N_TURBINE_STAGES = 3
+TURBINE_PRESSURE_RATIO = (P_MAX/P_MIN)**(1/N_TURBINE_STAGES)
 
 IC_OUTLET_TEMP = 300.0  # K
 CONDENSER_OUTLET_TEMP = 300 # K
@@ -95,7 +96,7 @@ def build_cycle():
         name = 'Fuel Compressor - Outlet',
         species = FUEL_SPECIES,
         m_dot = DEFAULT_FUEL_MASS_FLOW,
-        T = 700, # K
+        T = 429.70, # K
         P = P_MAX,
         z = np.array(FUEL_MOLE_FRACTIONS),
         phase = 'vapor',
@@ -134,7 +135,7 @@ def build_cycle():
 
     o2_inlet = Input(
         name = 'O2 Inlet',
-        m_dot = 30,  # Kg/s (Temporary)
+        m_dot = m_o2_stream,  # Kg/s
         T = O2_TEMP,
         P = P_MAX,
         z = np.array(O2_MOLE_FRACTIONS),
@@ -185,7 +186,7 @@ def build_cycle():
     co2_recycled = State(
         name = 'Recycled CO2',
         species = PRODUCT_SPECIES,
-        m_dot = 500,  # Kg/s
+        m_dot = 475,  # Kg/s
         T = IC_OUTLET_TEMP,
         P = P_ITM,
         z = np.array([0.9990, 0.0007, 0.0001, 0.0001, 0.0001]),
@@ -196,7 +197,7 @@ def build_cycle():
     co2_purge = State(
         name = 'Purged CO2',
         species = PRODUCT_SPECIES,
-        m_dot = 20,  # Kg/s
+        m_dot = 25,  # Kg/s
         T = IC_OUTLET_TEMP,
         P = P_ITM,
         z = np.array([0.9990, 0.0007, 0.0001, 0.0001, 0.0001]),
@@ -215,8 +216,8 @@ def build_cycle():
     co2_max_pressure = State(
         name = 'CO2 Max. Pressure',
         species = PRODUCT_SPECIES,
-        m_dot = 500,  # Kg/s
-        T = IC_OUTLET_TEMP,
+        m_dot = 475,  # Kg/s
+        T = 328.59,  # K
         P = P_MAX,
         z = np.array([0.9990, 0.0007, 0.0001, 0.0001, 0.0001]),
         phase = 'liquid',
@@ -236,7 +237,7 @@ def build_cycle():
         name = 'CO2 Combustion',
         species = PRODUCT_SPECIES,
         m_dot = m_co2_oxidant,  # Kg/s
-        T = 320,  # K
+        T = 328.59,  # K
         P = P_MAX,
         z = np.array([0.9990, 0.0007, 0.0001, 0.0001, 0.0001]),
         phase = 'liquid',
@@ -246,8 +247,8 @@ def build_cycle():
     co2_dilution = State(
         name = 'CO2 Dilution',
         species = PRODUCT_SPECIES,
-        m_dot = 200,  # Kg/s
-        T = 320,  # K
+        m_dot = 213.77,  # Kg/s
+        T = 328.59,  # K
         P = P_MAX,
         z = np.array([0.9990, 0.0007, 0.0001, 0.0001, 0.0001]),
         phase = 'liquid',
@@ -258,7 +259,7 @@ def build_cycle():
         name = 'CO2 Cooling',
         species = PRODUCT_SPECIES,
         m_dot = 25,  # Kg/s
-        T = 320,  # K
+        T = 328.59,  # K
         P = P_MAX,
         z = np.array([0.9990, 0.0007, 0.0001, 0.0001, 0.0001]),
         phase = 'liquid',
@@ -276,10 +277,10 @@ def build_cycle():
     oxidant = State(
         name = 'Oxidant',
         species = PRODUCT_SPECIES,
-        m_dot = 266,  # Kg/s
-        T = 309,  # K
+        m_dot = 265.76,  # Kg/s
+        T = 317.03,  # K
         P = P_MAX,
-        z = np.array([0.8700, 0.0001, 0.1200, 0.0001, 0.0098]),
+        z = np.array([0.853034, 0.000598, 0.143275, 0.000378, 0.002715]),
         phase = 'liquid',
     )
     states[oxidant.name] = oxidant
@@ -294,10 +295,10 @@ def build_cycle():
     heated_oxidant = State(
         name = 'Heated Oxidant',
         species = PRODUCT_SPECIES,
-        m_dot = 266,  # Kg/s
-        T = 800,  # K
-        P = P_MAX,
-        z = np.array([0.8700, 0.0001, 0.1200, 0.0001, 0.0098]),
+        m_dot = 265.76,  # Kg/s
+        T = 1193.33,  # K
+        P = P_MAX*(1 - RECUPERATOR_PRESSURE_DROP_PERCENT/100),
+        z = np.array([0.853034, 0.000598, 0.143275, 0.000378, 0.002715]),
         phase = 'vapor',
     )
     states[heated_oxidant.name] = heated_oxidant
@@ -305,9 +306,9 @@ def build_cycle():
     heated_co2_dilution = State(
         name = 'Heated Dilution CO2',
         species = PRODUCT_SPECIES,
-        m_dot = 210,  # Kg/s
-        T = 1000,  # K
-        P = P_MAX,
+        m_dot = 213.77,  # Kg/s
+        T = 1195,  # K
+        P = P_MAX*(1 - RECUPERATOR_PRESSURE_DROP_PERCENT/100),
         z = np.array([0.9990, 0.0007, 0.0001, 0.0001, 0.0001]),
         phase = 'vapor',
     )
@@ -318,7 +319,7 @@ def build_cycle():
         species = PRODUCT_SPECIES,
         m_dot = 25,  # Kg/s
         T = COOLANT_TEMP,
-        P = P_MAX,
+        P = P_MAX*(1 - RECUPERATOR_PRESSURE_DROP_PERCENT/100),
         z = np.array([0.9990, 0.0007, 0.0001, 0.0001, 0.0001]),
         phase = 'vapor',
     )
@@ -327,8 +328,8 @@ def build_cycle():
     lp_turbine_outlet = State(
         name = 'LP Turbine Outlet',
         species = PRODUCT_SPECIES,
-        m_dot = 400,  # Kg/s
-        T = 1000,  # K
+        m_dot = 600,  # Kg/s
+        T = 1200,  # K
         P = P_MIN,
         z = np.array([0.8973, 0.0839, 0.0011, 0.0177, 0.0001]),
         phase = 'vapor',
@@ -350,7 +351,7 @@ def build_cycle():
         species = PRODUCT_SPECIES,
         m_dot = 600,  # Kg/s
         T = 400,  # K
-        P = P_MIN,
+        P = P_MIN*(1 - RECUPERATOR_PRESSURE_DROP_PERCENT/100),
         z = np.array([0.8973, 0.0839, 0.0011, 0.0177, 0.0001]),
         phase = 'vapor',
     )
@@ -379,10 +380,10 @@ def build_cycle():
     combustion_products = State(
         name = 'Combustion Products',
         species = PRODUCT_SPECIES,
-        m_dot = 550,  # Kg/s
-        T = 2000,  # K
-        P = P_MAX,
-        z = np.array([0.8973, 0.0839, 0.0011, 0.0177, 0.0001]),
+        m_dot = 273.16,  # Kg/s
+        T = 2055.79,  # K
+        P = P_MAX*(1 - RECUPERATOR_PRESSURE_DROP_PERCENT/100),
+        z = np.array([0.864920, 0.130786, 0.001404, 0.000353, 0.002537]),
     )
     states[combustion_products.name] = combustion_products
 
@@ -393,6 +394,73 @@ def build_cycle():
         outlet = combustion_products,
     )
     components[combustor.name] = combustor
+
+    diluted_products = State(
+        name = 'Diluted Products',
+        species = PRODUCT_SPECIES,
+        m_dot = 486.93,  # Kg/s
+        T = 1695.01,  # K
+        P = P_MAX*(1 - RECUPERATOR_PRESSURE_DROP_PERCENT/100),
+        z = np.array([0.921133, 0.076247, 0.000857, 0.000247, 0.001516]),
+    )
+    states[diluted_products.name] = diluted_products
+
+    dilution_mixer = Mixer(
+        name = 'Dilution Mixer',
+        inlets = [combustion_products, heated_co2_dilution],
+        outlet = diluted_products,
+    )
+    components[dilution_mixer.name] = dilution_mixer
+
+    hp_turbine_outlet = State(
+        name = 'HP Turbine - Outlet',
+        species = PRODUCT_SPECIES,
+        m_dot = 486.93,  # Kg/s
+        T = 1531.41,  # K
+        P = P_MAX/TURBINE_PRESSURE_RATIO,   # Pa
+        z = np.array([0.921133, 0.076247, 0.000857, 0.000247, 0.001516]),
+    )
+    states[hp_turbine_outlet.name] = hp_turbine_outlet
+
+    hp_turbine = Turbine(
+        name = 'HP Turbine',
+        efficiency = ETA_TURBINE,
+        P_out = P_MAX/TURBINE_PRESSURE_RATIO,
+        inlet = diluted_products,
+        outlet = hp_turbine_outlet,
+    )
+    components[hp_turbine.name] = hp_turbine
+
+    ip_turbine_inlet = State(
+        name = 'IP Turbine Inlet',
+        species = PRODUCT_SPECIES,
+        m_dot = 500,  # Kg/s
+        T = 1500,  # K
+        P = P_MAX/TURBINE_PRESSURE_RATIO,
+        z = np.array([0.921133, 0.076247, 0.000857, 0.000247, 0.001516]),
+    )
+    states[ip_turbine_inlet.name] = ip_turbine_inlet
+
+    hp_co2_cooling = State(
+        name = 'HP Turbine cooling CO2',
+        species = PRODUCT_SPECIES,
+        m_dot = 15,  # Kg/s
+        T = COOLANT_TEMP,
+        P = P_MAX/TURBINE_PRESSURE_RATIO,
+        z = np.array([0.9990, 0.0007, 0.0001, 0.0001, 0.0001]),
+    )
+    states[hp_co2_cooling.name] = hp_co2_cooling
+
+    ip_co2_cooling = State(
+        name = 'IP Turbine cooling CO2',
+        species = PRODUCT_SPECIES,
+        m_dot = 10,  # Kg/s
+        T = COOLANT_TEMP,
+        P = P_MAX/(2*TURBINE_PRESSURE_RATIO),
+        z = np.array([0.9990, 0.0007, 0.0001, 0.0001, 0.0001]),
+    )
+    states[ip_co2_cooling.name] = ip_co2_cooling
+
 
     x0 = np.asarray([
         value
