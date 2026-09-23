@@ -129,20 +129,42 @@ class Mixer:
 
     The outlet pressure is set to the lowest inlet pressure, the outlet
     composition is obtained from the inlet molar flows, and the outlet
-    temperature is determined by the enthalpy balance.
+    temperature is determined by the enthalpy balance. Optional relative
+    ``inlet_mass_ratios`` add one flow specification per inlet except the
+    final reference inlet.
     """
 
-    def __init__(self, name, inlets, outlet):
+    def __init__(self, name, inlets, outlet, inlet_mass_ratios=None):
         inlets = tuple(inlets)
+
+        if inlet_mass_ratios is not None:
+            if len(inlet_mass_ratios) != len(inlets):
+                raise ValueError('inlet_mass_ratios must match inlet count')
+            inlet_mass_ratios = np.asarray(inlet_mass_ratios, dtype=float)
+            if np.any(inlet_mass_ratios <= 0.0):
+                raise ValueError('inlet_mass_ratios must be positive')
 
         self.name = name
         self.inlets = inlets
         self.outlet = outlet
+        self.inlet_mass_ratios = inlet_mass_ratios
         self.state_dependencies = (*inlets, outlet)
 
     def residuals(self):
         eqs = []
         outlet = self.outlet
+
+        if self.inlet_mass_ratios is not None:
+            reference_inlet = self.inlets[-1]
+            reference_ratio = self.inlet_mass_ratios[-1]
+            for inlet, ratio in zip(
+                self.inlets[:-1],
+                self.inlet_mass_ratios[:-1],
+            ):
+                target_ratio = ratio/reference_ratio
+                eqs.append(
+                    (inlet.m_dot - target_ratio*reference_inlet.m_dot)*m_mult
+                )
 
         species_molar_flows = {}
         total_molar_flow = 0.0
@@ -272,15 +294,16 @@ class Compressor:
 
 
 class Turbine:
-    """Adiabatic turbine with a phase-aware isentropic reference flash."""
+    """Adiabatic turbine with an optional inlet-temperature specification."""
 
-    def __init__(self, name, efficiency, P_out, inlet, outlet):
+    def __init__(self, name, efficiency, P_out, inlet, outlet, TIT=None):
         self.name = name
         self.state_dependencies = (inlet, outlet)
         self.efficiency = efficiency
         self.P_out = P_out
         self.inlet = inlet
         self.outlet = outlet
+        self.TIT = TIT
         self.W = None
 
         self.thermo_state = new_heos(inlet.species)
@@ -298,6 +321,9 @@ class Turbine:
 
         h_iso = ps_flash_enthalpy(self.thermo_state, self.P_out, inlet.s, inlet.z)
         eqs.append(((inlet.h - outlet.h) - self.efficiency*(inlet.h - h_iso))*h_mult)
+
+        if self.TIT is not None:
+            eqs.append((inlet.T - self.TIT)*T_mult)
 
         self.W = inlet.m_dot*(inlet.h - outlet.h)
         return eqs
@@ -367,6 +393,64 @@ class Intercooler:
         return eqs
 
 
+class Condenser:
+    """Cool a process stream and separate equilibrium vapor and liquid.
+
+    The vapor and liquid outlets are fixed at ``T_out`` and the inlet
+    pressure. Component mass balances determine the two outlet flows and
+    compositions. Fugacity equality for every species enforces full
+    liquid-vapor equilibrium.
+    """
+
+    def __init__(self, name, T_out, inlet, vapor_outlet, liquid_outlet):
+        inlet_species = set(inlet.species)
+        vapor_species = set(vapor_outlet.species)
+        liquid_species = set(liquid_outlet.species)
+
+        if vapor_outlet.imposed_phase != 'vapor':
+            raise ValueError('Condenser vapor outlet must impose the vapor phase')
+        if liquid_outlet.imposed_phase != 'liquid':
+            raise ValueError('Condenser liquid outlet must impose the liquid phase')
+
+        self.name = name
+        self.T_out = T_out
+        self.inlet = inlet
+        self.vapor_outlet = vapor_outlet
+        self.liquid_outlet = liquid_outlet
+        self.state_dependencies = (inlet, vapor_outlet, liquid_outlet)
+        self.Q_ext = None
+
+    def residuals(self):
+        eqs = []
+        inlet = self.inlet
+        vapor = self.vapor_outlet
+        liquid = self.liquid_outlet
+
+        for inlet_index, species in enumerate(inlet.species):
+            vapor_index = vapor.species.index(species)
+            liquid_index = liquid.species.index(species)
+            mass_in = inlet.m_dot*inlet.w[inlet_index]
+            mass_out = (vapor.m_dot*vapor.w[vapor_index] + liquid.m_dot*liquid.w[liquid_index])
+
+            eqs.append((mass_in - mass_out)*m_mult)
+
+        eqs.append((vapor.T - self.T_out)*T_mult)
+        eqs.append((liquid.T - self.T_out)*T_mult)
+        eqs.append((vapor.P - inlet.P)*P_mult)
+        eqs.append((liquid.P - inlet.P)*P_mult)
+
+        for species in inlet.species:
+            vapor_index = vapor.species.index(species)
+            liquid_index = liquid.species.index(species)
+            fugacity_vapor = (vapor.phi[vapor_index] * vapor.z[vapor_index] * vapor.P)
+            fugacity_liquid = (liquid.phi[liquid_index] * liquid.z[liquid_index] * liquid.P)
+
+            eqs.append((fugacity_vapor - fugacity_liquid)*P_mult)
+
+        self.Q_ext = (vapor.m_dot*vapor.h + liquid.m_dot*liquid.h - inlet.m_dot*inlet.h)
+        return eqs
+
+
 class ReboilerCondenser:
     """Coupled total condenser and partial reboiler with equal duties."""
 
@@ -429,14 +513,17 @@ class ReboilerCondenser:
 class O2Specification:
     """Flowsheet-level oxygen product specifications."""
 
-    def __init__(self, name, o2_product, purity_target):
+    def __init__(self, name, o2_product, purity_target, m_dot=None):
         if not 0.0 < purity_target <= 1.0:
             raise ValueError('purity_target must be between 0 and 1')
+        if m_dot is not None and m_dot <= 0.0:
+            raise ValueError('m_dot must be positive')
 
         self.name = name
         self.state_dependencies = (o2_product,)
         self.o2_product = o2_product
         self.purity_target = purity_target
+        self.m_dot = m_dot
 
     def residuals(self):
         eqs = []
@@ -448,6 +535,9 @@ class O2Specification:
                 break
 
         eqs.append((product.z[o2_index] - self.purity_target)*z_mult)
+        if self.m_dot is not None:
+            eqs.append((product.m_dot - self.m_dot)*m_mult)
+
         return eqs
 
 
@@ -461,11 +551,11 @@ class Splitter:
 
     * ``split_fractions``: fractions for all outlets, summing to one;
     * ``split_ratios``: relative weights for all outlets, normalized internally;
-    * ``outlet_flows``: fixed mass flows with exactly one ``None`` outlet,
-      which receives the remaining flow.
+    * ``outlet_flows``: fixed mass flows for selected outlets; use ``None``
+      for flows that are determined elsewhere in the flowsheet.
 
-    Only ``len(outlets) - 1`` flow equations are added; the total mass balance
-    determines the final outlet flow.
+    Each specified allocation adds one flow equation.  The total mass balance
+    is always enforced.
     """
 
     def __init__(
@@ -522,10 +612,6 @@ class Splitter:
         elif outlet_flows is not None:
             if len(outlet_flows) != len(self.outlets):
                 raise ValueError('outlet_flows must match outlet count')
-            if sum(flow is None for flow in outlet_flows) != 1:
-                raise ValueError(
-                    'outlet_flows must contain exactly one None residual outlet'
-                )
             for outlet, flow in zip(self.outlets, outlet_flows):
                 if flow is not None:
                     if flow < 0.0:
@@ -557,16 +643,16 @@ class Splitter:
 
 
 class TurbineCoolingSplitter:
-    """Allocate turbine coolant using the El-Masri cooling correlation.
+    """Allocate and throttle turbine coolant using the El-Masri correlation.
 
-    Each coolant outlet corresponds to one hot-gas turbine inlet.  The
-    required coolant flow for a stage is
+    Each coolant outlet corresponds to one hot-gas turbine inlet and outlet.
+    The required coolant flow for a stage is
 
     ``K * m_hot * (T_hot - T_blade) / (T_blade - T_coolant)``.
 
-    The inlet flow is therefore determined by the sum of the stage cooling
-    requirements.  As with :class:`Splitter`, temperature, pressure, and
-    composition are unchanged by the split.
+    The inlet flow is determined by the sum of the stage cooling requirements.
+    Each coolant branch is throttled isenthalpically to its corresponding
+    turbine outlet pressure, while composition remains unchanged.
     """
 
     def __init__(
@@ -577,22 +663,12 @@ class TurbineCoolingSplitter:
         inlet,
         outlets,
         hot_gas_inlets,
+        turbine_outlets,
     ):
         outlets = tuple(outlets)
         hot_gas_inlets = tuple(hot_gas_inlets)
+        turbine_outlets = tuple(turbine_outlets)
 
-        if not outlets or any(outlet is None for outlet in outlets):
-            raise ValueError(
-                'TurbineCoolingSplitter requires at least one valid outlet'
-            )
-        if len(outlets) != len(hot_gas_inlets):
-            raise ValueError(
-                'outlets and hot_gas_inlets must have the same length'
-            )
-        if any(hot_gas_inlet is None for hot_gas_inlet in hot_gas_inlets):
-            raise ValueError(
-                'TurbineCoolingSplitter requires valid hot-gas inlets'
-            )
         if cooling_coefficient < 0.0:
             raise ValueError('cooling_coefficient must be nonnegative')
 
@@ -602,7 +678,13 @@ class TurbineCoolingSplitter:
         self.inlet = inlet
         self.outlets = outlets
         self.hot_gas_inlets = hot_gas_inlets
-        self.state_dependencies = (inlet, *outlets, *hot_gas_inlets)
+        self.turbine_outlets = turbine_outlets
+        self.state_dependencies = (
+            inlet,
+            *outlets,
+            *hot_gas_inlets,
+            *turbine_outlets,
+        )
 
     def residuals(self):
         eqs = []
@@ -625,9 +707,12 @@ class TurbineCoolingSplitter:
 
         eqs.append((inlet.m_dot - sum(required_flows))*m_mult)
 
-        for outlet in self.outlets:
-            eqs.append((outlet.T - inlet.T)*T_mult)
-            eqs.append((outlet.P - inlet.P)*P_mult)
+        for outlet, turbine_outlet in zip(
+            self.outlets,
+            self.turbine_outlets,
+        ):
+            eqs.append((outlet.P - turbine_outlet.P)*P_mult)
+            eqs.append((outlet.h - inlet.h)*h_mult)
 
             for i in range(len(inlet.z) - 1):
                 eqs.append((outlet.z[i] - inlet.z[i])*z_mult)

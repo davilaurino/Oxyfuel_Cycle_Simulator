@@ -16,7 +16,8 @@ from common.classes import (
 )
 
 
-def build_asu():
+def build_asu(o2_mass_flow=29.24):
+    """Build the LOX ASU, optionally leaving product flow unspecified."""
     species = ['O2', 'N2', 'AR']
     air_composition = [0.209390, 0.780848, 0.009762]
     states = {}
@@ -26,10 +27,10 @@ def build_asu():
     mac_air_in = State(
         name = 'MAC air intake',
         species = species,
-        m_dot = 10.0,             # kg/s
-        T = 298.15,               # K
+        m_dot = 126.5,             # kg/s
+        T = 298.1,               # K
         P = 101325.0,             # Pa
-        z = air_composition,
+        z = [0.2094, 0.7808, 0.0098],
         phase = 'vapor',
     )
     states[mac_air_in.name] = mac_air_in
@@ -40,7 +41,6 @@ def build_asu():
         P = mac_air_in.P,
         z = mac_air_in.z,
         outlet = mac_air_in,
-        m_dot = mac_air_in.m_dot,
     )
     components[mac_air_input.name] = mac_air_input
 
@@ -60,10 +60,10 @@ def build_asu():
     lp_air_to_hx1 = State(
         name = 'LP air to HX1',
         species = species,
-        m_dot = 3.5,              # kg/s
+        m_dot = 12.9,              # kg/s
         T = 300.0,                # K
-        P = 6.00e5,               # Pa
-        z = air_composition,
+        P = 600000.0,               # Pa
+        z = [0.2094, 0.7808, 0.0098],
         phase = 'vapor',
     )
     states[lp_air_to_hx1.name] = lp_air_to_hx1
@@ -71,10 +71,10 @@ def build_asu():
     air_to_next_compression = State(
         name = 'Air to next compression train',
         species = species,
-        m_dot = 6.5,              # kg/s
+        m_dot = 113.6,              # kg/s
         T = 300.0,                # K
-        P = 6.00e5,               # Pa
-        z = air_composition,
+        P = 600000.0,               # Pa
+        z = [0.2094, 0.7808, 0.0098],
         phase = 'vapor',
     )
     states[air_to_next_compression.name] = air_to_next_compression
@@ -104,10 +104,10 @@ def build_asu():
     mp_air_to_hx1 = State(
         name = 'MP air to HX1',
         species = species,
-        m_dot = 3.5,              # kg/s
+        m_dot = 82.2,              # kg/s
         T = 300.0,                # K
-        P = 1.80e6,               # Pa
-        z = air_composition,
+        P = 1800000.0,               # Pa
+        z = [0.2094, 0.7808, 0.0098],
         phase = 'vapor',
     )
     states[mp_air_to_hx1.name] = mp_air_to_hx1
@@ -115,10 +115,10 @@ def build_asu():
     air_to_hp_compression = State(
         name = 'Air to HP compression train',
         species = species,
-        m_dot = 3.0,              # kg/s
+        m_dot = 31.4,              # kg/s
         T = 300.0,                # K
-        P = 1.80e6,               # Pa
-        z = air_composition,
+        P = 1800000.0,               # Pa
+        z = [0.2094, 0.7808, 0.0098],
         phase = 'vapor',
     )
     states[air_to_hp_compression.name] = air_to_hp_compression
@@ -150,30 +150,30 @@ def build_asu():
     hp_air_to_hpc = State(
         name = 'Throttled HP air',
         species = species,
-        m_dot = 3.0,              # kg/s
-        T = 99.3799297,           # K, converged initial guess
-        P = 6.00e5,               # Pa
-        z = air_composition,
+        m_dot = 31.4,              # kg/s
+        T = 98.7,           # K, converged initial guess
+        P = 600000.0,               # Pa
+        z = [0.2094, 0.7808, 0.0098],
     )
     states[hp_air_to_hpc.name] = hp_air_to_hpc
 
     mp_air_to_hpc = State(
         name = 'Expanded MP air',
         species = species,
-        m_dot = 3.5,              # kg/s
-        T = 107.0516108,          # K, converged initial guess
-        P = 6.00e5,               # Pa
-        z = air_composition,
+        m_dot = 82.2,              # kg/s
+        T = 100.6,          # K, converged initial guess
+        P = 600000.0,               # Pa
+        z = [0.2094, 0.7808, 0.0098],
     )
     states[mp_air_to_hpc.name] = mp_air_to_hpc
 
     cooled_lp_air = State(
         name = 'Cooled LP air',
         species = species,
-        m_dot = lp_air_to_hx1.m_dot, # kg/s
-        T = 102.7389877,          # K, converged initial guess
-        P = lp_air_to_hx1.P,      # Pa; HPC tray-15 pressure
-        z = lp_air_to_hx1.z,
+        m_dot = 12.9, # kg/s
+        T = 102.7,          # K, converged initial guess
+        P = 600000.0,      # Pa; HPC tray-15 pressure
+        z = [0.2094, 0.7808, 0.0098],
         phase = 'vapor',
     )
     states[cooled_lp_air.name] = cooled_lp_air
@@ -182,10 +182,10 @@ def build_asu():
     hpc_reflux = State(
         name = 'HPC reflux',
         species = species,
-        m_dot = 3.4543,           # kg/s
+        m_dot = 50.2,           # kg/s
         T = 96.0,                 # K
-        P = 5.90e5,               # Pa
-        z = [0.0141368, 0.9820943, 0.0037689],
+        P = 590000.0,               # Pa
+        z = [0.0066, 0.9910, 0.0024],
         phase = 'liquid',
     )
     states[hpc_reflux.name] = hpc_reflux
@@ -199,12 +199,12 @@ def build_asu():
         n_trays = 15,
         P_top = 5.90e5,           # Pa
         P_bottom = 6.00e5,        # Pa
-        L_top = 3.45,             # kg/s
-        L_bottom = 5.55,          # kg/s
-        V_top = 6.64,             # kg/s
-        V_bottom = 6.47,          # kg/s
-        x_top = [0.0141368, 0.9820943, 0.0037689],
-        x_bottom = [0.3269706, 0.6596584, 0.0133710],
+        L_top = 50.3,             # kg/s
+        L_bottom = 80.2,          # kg/s
+        V_top = 96.5,             # kg/s
+        V_bottom = 92.0,          # kg/s
+        x_top = [0.0160, 0.9796, 0.0044],
+        x_bottom = [0.3325, 0.6532, 0.0143],
         feeds = {
             1: [hpc_reflux],
             12: [hp_air_to_hpc],
@@ -217,10 +217,10 @@ def build_asu():
     condensed_hpc_n2 = State(
         name = 'Condensed HPC N2',
         species = species,
-        m_dot = 6.6428,           # kg/s
+        m_dot = 96.5,           # kg/s
         T = 96.0,                 # K
-        P = 5.90e5,               # Pa
-        z = hpc_reflux.z,
+        P = 590000.0,               # Pa
+        z = [0.0066, 0.9910, 0.0024],
         phase = 'liquid',
     )
     states[condensed_hpc_n2.name] = condensed_hpc_n2
@@ -228,10 +228,10 @@ def build_asu():
     hpc_n2_to_hx2 = State(
         name = 'HPC N2 to HX2',
         species = species,
-        m_dot = 3.1886,           # kg/s
+        m_dot = 46.3,           # kg/s
         T = 96.0,                 # K
-        P = 5.90e5,               # Pa
-        z = hpc_reflux.z,
+        P = 590000.0,               # Pa
+        z = [0.0066, 0.9910, 0.0024],
         phase = 'liquid',
     )
     states[hpc_n2_to_hx2.name] = hpc_n2_to_hx2
@@ -250,30 +250,30 @@ def build_asu():
     lpc_n2_feed = State(
         name = 'LPC N2 feed',
         species = species,
-        m_dot = 3.1886,           # kg/s
-        T = 78.9413,              # K
-        P = 1.20e5,               # Pa
-        z = hpc_reflux.z,
+        m_dot = 46.3,           # kg/s
+        T = 78.9,              # K
+        P = 120000.0,               # Pa
+        z = [0.0066, 0.9910, 0.0024],
     )
     states[lpc_n2_feed.name] = lpc_n2_feed
 
     lpc_o2_feed = State(
         name = 'LPC enriched O2 feed',
         species = species,
-        m_dot = 5.5513,           # kg/s
-        T = 82.4186,              # K
-        P = 1.28e5,               # Pa
-        z = [0.3269706, 0.6596584, 0.0133710],
+        m_dot = 80.2,           # kg/s
+        T = 82.5,              # K
+        P = 128000.0,               # Pa
+        z = [0.3325, 0.6532, 0.0143],
     )
     states[lpc_o2_feed.name] = lpc_o2_feed
 
     lpc_o2_product = State(
         name = 'LPC O2 product',
         species = species,
-        m_dot = 2.1890,           # kg/s
-        T = 92.5238,              # K
-        P = 1.30e5,               # Pa
-        z = [0.98, 0.0000236, 0.0199764],
+        m_dot = 29.2,           # kg/s
+        T = 92.5,              # K
+        P = 130000.0,               # Pa
+        z = [0.9800, 0.0001, 0.0199],
         phase = 'liquid',
     )
     states[lpc_o2_product.name] = lpc_o2_product
@@ -282,16 +282,17 @@ def build_asu():
         name = 'O2 Specification',
         o2_product = lpc_o2_product,
         purity_target = 0.98,
+        m_dot = o2_mass_flow,
     )
     components[o2_specification.name] = o2_specification
 
     lpc_boilup = State(
         name = 'LPC boilup',
         species = species,
-        m_dot = 5.4228,           # kg/s
-        T = 92.5238,              # K
-        P = 1.30e5,               # Pa
-        z = [0.9693043, 0.0000909, 0.0306048],
+        m_dot = 78.6,           # kg/s
+        T = 92.5,              # K
+        P = 130000.0,               # Pa
+        z = [0.9690, 0.0005, 0.0305],
         phase = 'vapor',
     )
     states[lpc_boilup.name] = lpc_boilup
@@ -302,12 +303,12 @@ def build_asu():
         n_trays = 20,
         P_top = 1.20e5,           # Pa
         P_bottom = 1.30e5,        # Pa
-        L_top = 3.0774,           # kg/s
-        L_bottom = 7.6118,        # kg/s
-        V_top = 7.8110,           # kg/s
-        V_bottom = 5.4393,        # kg/s
-        x_top = [0.0717895, 0.9109801, 0.0172304],
-        x_bottom = [0.9723859, 0.0000715, 0.0275426],
+        L_top = 45.2,             # kg/s
+        L_bottom = 107.8,         # kg/s
+        V_top = 97.3,             # kg/s
+        V_bottom = 78.8,          # kg/s
+        x_top = [0.0252, 0.9573, 0.0175],
+        x_bottom = [0.9720, 0.0004, 0.0276],
         feeds = {
             1: [lpc_n2_feed],
             12: [lpc_o2_feed],
@@ -331,10 +332,10 @@ def build_asu():
     cooled_hpc_n2 = State(
         name = 'Cooled HPC N2',
         species = species,
-        m_dot = 3.1886,           # kg/s
-        T = 81.4304,              # K
-        P = 5.90e5,               # Pa
-        z = hpc_reflux.z,
+        m_dot = 46.3,           # kg/s
+        T = 81.1,              # K
+        P = 590000.0,               # Pa
+        z = [0.0066, 0.9910, 0.0024],
         phase = 'liquid',
     )
     states[cooled_hpc_n2.name] = cooled_hpc_n2
@@ -342,10 +343,10 @@ def build_asu():
     cooled_hpc_o2 = State(
         name = 'Cooled HPC enriched O2',
         species = species,
-        m_dot = 5.5513,           # kg/s
-        T = 97.5910,              # K
-        P = 6.00e5,               # Pa
-        z = lpc_o2_feed.z,
+        m_dot = 80.2,           # kg/s
+        T = 99.2,              # K
+        P = 600000.0,               # Pa
+        z = [0.3325, 0.6532, 0.0143],
         phase = 'liquid',
     )
     states[cooled_hpc_o2.name] = cooled_hpc_o2
@@ -353,10 +354,10 @@ def build_asu():
     warmed_lpc_n2 = State(
         name = 'Warmed LPC N2',
         species = species,
-        m_dot = 7.8110,           # kg/s
+        m_dot = 97.3,           # kg/s
         T = 94.0,                 # K
-        P = 1.20e5,               # Pa
-        z = [0.0201416, 0.9726049, 0.0072535],
+        P = 120000.0,               # Pa
+        z = [0.0068, 0.9861, 0.0071],
         phase = 'vapor',
     )
     states[warmed_lpc_n2.name] = warmed_lpc_n2
@@ -365,10 +366,10 @@ def build_asu():
     pressurized_lox = State(
         name = 'Pressurized LOX',
         species = species,
-        m_dot = lpc_o2_product.m_dot, # kg/s
+        m_dot = 29.2, # kg/s
         T = 100.7,                # K, pump-outlet initial guess
-        P = 30.0e6,               # Pa
-        z = lpc_o2_product.z,
+        P = 30000000.0,               # Pa
+        z = [0.9800, 0.0001, 0.0199],
         phase = 'liquid',
     )
     states[pressurized_lox.name] = pressurized_lox
@@ -377,20 +378,20 @@ def build_asu():
     cooled_mp_air = State(
         name = 'Cooled MP air',
         species = species,
-        m_dot = mp_air_to_hx1.m_dot, # kg/s
+        m_dot = 82.2, # kg/s
         T = 130.0,                # K, fixed by HX1 specification
-        P = mp_air_to_hx1.P,      # Pa
-        z = mp_air_to_hx1.z,
+        P = 1800000.0,      # Pa
+        z = [0.2094, 0.7808, 0.0098],
     )
     states[cooled_mp_air.name] = cooled_mp_air
 
     cooled_hp_air = State(
         name = 'Cooled HP air',
         species = species,
-        m_dot = hp_air.m_dot, # kg/s
-        T = 105.0,                # K, energy-balance initial guess
-        P = hp_air.P, # Pa
-        z = hp_air.z,
+        m_dot = 31.4, # kg/s
+        T = 102.7,                # K, energy-balance initial guess
+        P = 4000000.0, # Pa
+        z = [0.2094, 0.7808, 0.0098],
         phase = 'liquid',
     )
     states[cooled_hp_air.name] = cooled_hp_air
@@ -398,10 +399,10 @@ def build_asu():
     n2_product = State(
         name = 'N2 product',
         species = species,
-        m_dot = warmed_lpc_n2.m_dot, # kg/s
-        T = 294.0,                # K, 6 K warm-end approach
-        P = warmed_lpc_n2.P,      # Pa
-        z = warmed_lpc_n2.z,
+        m_dot = 97.3, # kg/s
+        T = 298.0,                # K, 6 K warm-end approach
+        P = 120000.0,      # Pa
+        z = [0.0068, 0.9861, 0.0071],
         phase = 'vapor',
     )
     states[n2_product.name] = n2_product
@@ -409,10 +410,10 @@ def build_asu():
     o2_product = State(
         name = 'O2 product',
         species = species,
-        m_dot = pressurized_lox.m_dot, # kg/s
-        T = 294.0,                # K, 6 K warm-end approach
-        P = pressurized_lox.P,    # Pa
-        z = pressurized_lox.z,
+        m_dot = 29.2, # kg/s
+        T = 298.0,                # K, 6 K warm-end approach
+        P = 30000000.0,    # Pa
+        z = [0.9800, 0.0001, 0.0199],
         phase = 'vapor',
     )
     states[o2_product.name] = o2_product

@@ -88,16 +88,6 @@ def ylny(y):
         t = 0
     return t
 
-def y_H2O_sat(T, P):
-    P_sat = PropsSI('P', 'T', T, 'Q', 0, 'Water')
-    y = P_sat/P
-    return y
-
-def CO2_volume(T, P):
-    d = PropsSI('D', 'P', P, 'T', T, 'CarbonDioxide')
-    v = 1/d
-    return v
-
 def mass_fraction(y, species):
     pairs = list(zip(y, species))
     MW_mix = sum(yi * sp.MW for (yi, sp) in pairs)

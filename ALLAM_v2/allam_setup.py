@@ -14,11 +14,12 @@ from common.classes import (
     Pump,
     Mod_MSHX,
     Splitter,
+    TurbineCoolingSplitter,
     Mixer,
     State,
     Combustor,
     Turbine,
-    Valve,
+    Condenser,
 )
 
 P_MIN  = 3e6  # Pa
@@ -45,7 +46,7 @@ RECUPERATOR_PRESSURE_DROP_PERCENT = 0.5  # %
 FUEL_TEMP = 298.15  # K
 FUEL_PRESSURE = 7.0e6  # Pa
 FUEL_SPECIES = [CH4, C2H6, C3H8, CO2]
-FUEL_MOLE_FRACTIONS = [0.94, 0.03, 0.02, 0.01]
+FUEL_MOLE_FRACTIONS = [0.9400, 0.0300, 0.0200, 0.0100]
 
 O2_TEMP = 298  # K
 O2_SPECIES = [O2, N2, AR]
@@ -56,17 +57,18 @@ BLADE_TEMP = 1120  # K — blade metal temperature limit
 COOLANT_TEMP = 473  # K — coolant temperature
 
 RECUPERATOR_PINCH_TEMP = 5.0  # K
-FLUE_GAS_OUTLET_TEMP = 400.0  # K
+FLUE_GAS_OUTLET_TEMP = 360.0  # K
 CONDENSER_OUTLET_TEMP = 300.0  # K
 
-DEFAULT_EXCESS_O2 = 1.01
+DEFAULT_EXCESS_O2 = 1.002
 DEFAULT_CO2_O2_RATIO = 8.0
-DEFAULT_TURBINE_INLET_TEMPERATURE = 1500.0  # K
+DEFAULT_TURBINE_INLET_TEMPERATURE = 1420.0  # K
 DEFAULT_FUEL_MASS_FLOW = 7.4  # Kg/s
 
 PRODUCT_SPECIES = [CO2, H2O, O2, N2, AR]
 
-def build_cycle():
+def build_cycle(o2_feed=None):
+    """Build the ALLAM cycle with an optional external oxygen stream."""
     states = {}
     components = {}
 
@@ -96,7 +98,7 @@ def build_cycle():
         name = 'Fuel Compressor - Outlet',
         species = FUEL_SPECIES,
         m_dot = DEFAULT_FUEL_MASS_FLOW,
-        T = 429.70, # K
+        T = 429.7,  # K
         P = P_MAX,
         z = np.array(FUEL_MOLE_FRACTIONS),
         phase = 'vapor',
@@ -121,56 +123,53 @@ def build_cycle():
     m_o2_stream = n_o2_stream*o2_stream_molar_mass
     m_co2_oxidant = m_o2_stream*DEFAULT_CO2_O2_RATIO
 
-    # O2 Input
-    o2_inlet_stream = State(
-        name = "O2 - Inlet Stream",
-        species = O2_SPECIES,
-        m_dot = m_o2_stream, # Kg/s
-        T = O2_TEMP,
-        P = P_MAX,
-        z = np.array(O2_MOLE_FRACTIONS),
-        phase = 'vapor',
-    )
-    states[o2_inlet_stream.name] = o2_inlet_stream
+    # Standalone runs define the O2 boundary here. Integrated runs reuse the
+    # ASU product State directly so there is only one set of stream variables.
+    if o2_feed is None:
+        o2_inlet_stream = State(
+            name = "O2 - Inlet Stream",
+            species = O2_SPECIES,
+            m_dot = m_o2_stream, # Kg/s
+            T = O2_TEMP,
+            P = P_MAX,
+            z = np.array(O2_MOLE_FRACTIONS),
+            phase = 'vapor',
+        )
+        states[o2_inlet_stream.name] = o2_inlet_stream
 
-    o2_inlet = Input(
-        name = 'O2 Inlet',
-        m_dot = m_o2_stream,  # Kg/s
-        T = O2_TEMP,
-        P = P_MAX,
-        z = np.array(O2_MOLE_FRACTIONS),
-        outlet = o2_inlet_stream,
-    )
-    components[o2_inlet.name] = o2_inlet
+        o2_inlet = Input(
+            name = 'O2 Inlet',
+            T = O2_TEMP,
+            P = P_MAX,
+            z = np.array(O2_MOLE_FRACTIONS),
+            outlet = o2_inlet_stream,
+        )
+        components[o2_inlet.name] = o2_inlet
+    else:
+        expected_species = [species.name for species in O2_SPECIES]
+        actual_species = [species.name for species in o2_feed.species]
+        if actual_species != expected_species:
+            raise ValueError(
+                'External O2 feed species must be ordered as '
+                f'{expected_species}; received {actual_species}'
+            )
+        o2_inlet_stream = o2_feed
 
-    # This stream will eventually be connected to the condenser outlet.  It
-    # is an unconstrained initial state for now, so no Input component is
-    # added at this stage.
-    co2_compressor_inlet = State(
-        name = 'CO2 Compressor - Inlet',
+    # The condenser vapor closes the cycle and feeds the recycle compressor.
+    condenser_vapor = State(
+        name = 'Condenser Vapor Outlet',
         species = PRODUCT_SPECIES,
-        m_dot = 500, # Kg/s
+        m_dot = 536.7,  # kg/s
         T = CONDENSER_OUTLET_TEMP,
-        P = P_MIN,
-        z = np.array([0.9990, 0.0007, 0.0001, 0.0001, 0.0001]),
+        P = P_MIN*(1 - RECUPERATOR_PRESSURE_DROP_PERCENT/100),
+        z = np.array([0.9588, 0.0017, 0.0003, 0.0039, 0.0353]),
         phase = 'vapor',
     )
-    states[co2_compressor_inlet.name] = co2_compressor_inlet
-
-    # Associated fake input
-    co2_fake = Input(
-        name = 'Fake CO2 Input',
-        m_dot = 500,  # Kg/s
-        T = CONDENSER_OUTLET_TEMP,
-        P = P_MIN,
-        z = np.array([0.9990, 0.0007, 0.0001, 0.0001, 0.0001]),
-        outlet = co2_compressor_inlet,
-    )
-    components[co2_fake.name] = co2_fake
+    states[condenser_vapor.name] = condenser_vapor
 
     co2_compressor_states, co2_compressor_components = build_compressor_train(
         name='CO2 Compressor',
-        inlet=co2_compressor_inlet,
+        inlet=condenser_vapor,
         P_end=P_ITM,
         cooling_temperature=IC_OUTLET_TEMP,
         n_stages=N_COMPRESSOR_STAGES,
@@ -186,10 +185,10 @@ def build_cycle():
     co2_recycled = State(
         name = 'Recycled CO2',
         species = PRODUCT_SPECIES,
-        m_dot = 475,  # Kg/s
+        m_dot = 516.4,  # kg/s
         T = IC_OUTLET_TEMP,
         P = P_ITM,
-        z = np.array([0.9990, 0.0007, 0.0001, 0.0001, 0.0001]),
+        z = np.array([0.9588, 0.0017, 0.0003, 0.0039, 0.0353]),
         phase = 'liquid',
     )
     states[co2_recycled.name] = co2_recycled
@@ -197,10 +196,10 @@ def build_cycle():
     co2_purge = State(
         name = 'Purged CO2',
         species = PRODUCT_SPECIES,
-        m_dot = 25,  # Kg/s
+        m_dot = 20.3,  # Kg/s
         T = IC_OUTLET_TEMP,
         P = P_ITM,
-        z = np.array([0.9990, 0.0007, 0.0001, 0.0001, 0.0001]),
+        z = np.array([0.9588, 0.0017, 0.0003, 0.0039, 0.0353]),
         phase = 'liquid',
     )
     states[co2_purge.name] = co2_purge
@@ -209,17 +208,16 @@ def build_cycle():
         name = 'CO2 Purge Splitter',
         inlet = co2_compressed,
         outlets = [co2_recycled, co2_purge],
-        split_fractions = [0.95, 0.05],
     )
     components[co2_purge_splitter.name] = co2_purge_splitter
 
     co2_max_pressure = State(
         name = 'CO2 Max. Pressure',
         species = PRODUCT_SPECIES,
-        m_dot = 475,  # Kg/s
-        T = 328.59,  # K
+        m_dot = 516.4,  # kg/s
+        T = 343.5,  # K
         P = P_MAX,
-        z = np.array([0.9990, 0.0007, 0.0001, 0.0001, 0.0001]),
+        z = np.array([0.9588, 0.0017, 0.0003, 0.0039, 0.0353]),
         phase = 'liquid',
     )
     states[co2_max_pressure.name] = co2_max_pressure
@@ -236,10 +234,10 @@ def build_cycle():
     co2_combustion = State(
         name = 'CO2 Combustion',
         species = PRODUCT_SPECIES,
-        m_dot = m_co2_oxidant,  # Kg/s
-        T = 328.59,  # K
+        m_dot = m_co2_oxidant,  # kg/s
+        T = 343.5,  # K
         P = P_MAX,
-        z = np.array([0.9990, 0.0007, 0.0001, 0.0001, 0.0001]),
+        z = np.array([0.9588, 0.0017, 0.0003, 0.0039, 0.0353]),
         phase = 'liquid',
     )
     states[co2_combustion.name] = co2_combustion
@@ -247,10 +245,10 @@ def build_cycle():
     co2_dilution = State(
         name = 'CO2 Dilution',
         species = PRODUCT_SPECIES,
-        m_dot = 213.77,  # Kg/s
-        T = 328.59,  # K
+        m_dot = 260.4,  # Kg/s
+        T = 343.5,  # K
         P = P_MAX,
-        z = np.array([0.9990, 0.0007, 0.0001, 0.0001, 0.0001]),
+        z = np.array([0.9588, 0.0017, 0.0003, 0.0039, 0.0353]),
         phase = 'liquid',
     )
     states[co2_dilution.name] = co2_dilution
@@ -258,10 +256,10 @@ def build_cycle():
     co2_cooling = State(
         name = 'CO2 Cooling',
         species = PRODUCT_SPECIES,
-        m_dot = 25,  # Kg/s
-        T = 328.59,  # K
+        m_dot = 21.6,  # Kg/s
+        T = 343.5,  # K
         P = P_MAX,
-        z = np.array([0.9990, 0.0007, 0.0001, 0.0001, 0.0001]),
+        z = np.array([0.9588, 0.0017, 0.0003, 0.0039, 0.0353]),
         phase = 'liquid',
     )
     states[co2_cooling.name] = co2_cooling
@@ -270,17 +268,16 @@ def build_cycle():
         name = 'CO2 Recycle Splitter',
         inlet = co2_max_pressure,
         outlets = [co2_combustion, co2_dilution, co2_cooling],
-        outlet_flows = [m_co2_oxidant, None, 25],
     )
     components[co2_recycle_splitter.name] = co2_recycle_splitter
 
     oxidant = State(
         name = 'Oxidant',
         species = PRODUCT_SPECIES,
-        m_dot = 265.76,  # Kg/s
-        T = 317.03,  # K
+        m_dot = 263.7,  # Kg/s
+        T = 331.1,  # K
         P = P_MAX,
-        z = np.array([0.853034, 0.000598, 0.143275, 0.000378, 0.002715]),
+        z = np.array([0.8193, 0.0015, 0.1428, 0.0036, 0.0328]),
         phase = 'liquid',
     )
     states[oxidant.name] = oxidant
@@ -289,16 +286,17 @@ def build_cycle():
         name = 'Oxidant mixer',
         inlets = [co2_combustion, o2_inlet_stream],
         outlet = oxidant,
+        inlet_mass_ratios = [DEFAULT_CO2_O2_RATIO, 1.0],
     )
     components[oxidant_mixer.name] = oxidant_mixer
 
     heated_oxidant = State(
         name = 'Heated Oxidant',
         species = PRODUCT_SPECIES,
-        m_dot = 265.76,  # Kg/s
-        T = 1193.33,  # K
+        m_dot = 263.7,  # Kg/s
+        T = 860.3,  # K
         P = P_MAX*(1 - RECUPERATOR_PRESSURE_DROP_PERCENT/100),
-        z = np.array([0.853034, 0.000598, 0.143275, 0.000378, 0.002715]),
+        z = np.array([0.8193, 0.0015, 0.1428, 0.0036, 0.0328]),
         phase = 'vapor',
     )
     states[heated_oxidant.name] = heated_oxidant
@@ -306,10 +304,10 @@ def build_cycle():
     heated_co2_dilution = State(
         name = 'Heated Dilution CO2',
         species = PRODUCT_SPECIES,
-        m_dot = 213.77,  # Kg/s
-        T = 1195,  # K
+        m_dot = 260.4,  # Kg/s
+        T = 993.2,  # K
         P = P_MAX*(1 - RECUPERATOR_PRESSURE_DROP_PERCENT/100),
-        z = np.array([0.9990, 0.0007, 0.0001, 0.0001, 0.0001]),
+        z = np.array([0.9588, 0.0017, 0.0003, 0.0039, 0.0353]),
         phase = 'vapor',
     )
     states[heated_co2_dilution.name] = heated_co2_dilution
@@ -317,45 +315,189 @@ def build_cycle():
     heated_co2_cooling = State(
         name = 'Heated Cooling CO2',
         species = PRODUCT_SPECIES,
-        m_dot = 25,  # Kg/s
+        m_dot = 21.6,  # Kg/s
         T = COOLANT_TEMP,
         P = P_MAX*(1 - RECUPERATOR_PRESSURE_DROP_PERCENT/100),
-        z = np.array([0.9990, 0.0007, 0.0001, 0.0001, 0.0001]),
+        z = np.array([0.9588, 0.0017, 0.0003, 0.0039, 0.0353]),
         phase = 'vapor',
     )
     states[heated_co2_cooling.name] = heated_co2_cooling
 
+    flue_gas = State(
+        name = 'Flue Gases',
+        species = PRODUCT_SPECIES,
+        m_dot = 553.1,  # Kg/s
+        T = 360.0,  # K
+        P = P_MIN*(1 - RECUPERATOR_PRESSURE_DROP_PERCENT/100),
+        z = np.array([0.8949, 0.0682, 0.0003, 0.0037, 0.0329]),
+    )
+    states[flue_gas.name] = flue_gas
+
+    combustion_products = State(
+        name = 'Combustion Products',
+        species = PRODUCT_SPECIES,
+        m_dot = 271.1,  # Kg/s
+        T = 1796.0,  # K
+        P = P_MAX*(1 - RECUPERATOR_PRESSURE_DROP_PERCENT/100),
+        z = np.array([0.8335, 0.1322, 0.0003, 0.0034, 0.0306]),
+        phase = 'vapor',
+    )
+    states[combustion_products.name] = combustion_products
+
+    combustor = Combustor(
+        name = 'Combustor',
+        fuel = compressed_fuel,
+        oxidant = heated_oxidant,
+        outlet = combustion_products,
+        excess_o2 = DEFAULT_EXCESS_O2
+    )
+    components[combustor.name] = combustor
+
+    diluted_products = State(
+        name = 'Diluted Products',
+        species = PRODUCT_SPECIES,
+        m_dot = 531.5,  # Kg/s
+        T = DEFAULT_TURBINE_INLET_TEMPERATURE,  # K
+        P = P_MAX*(1 - RECUPERATOR_PRESSURE_DROP_PERCENT/100),
+        z = np.array([0.8924, 0.0708, 0.0003, 0.0036, 0.0329]),
+        phase = 'vapor',
+    )
+    states[diluted_products.name] = diluted_products
+
+    dilution_mixer = Mixer(
+        name = 'Dilution Mixer',
+        inlets = [combustion_products, heated_co2_dilution],
+        outlet = diluted_products,
+    )
+    components[dilution_mixer.name] = dilution_mixer
+
+    hp_turbine_outlet = State(
+        name = 'HP Turbine - Outlet',
+        species = PRODUCT_SPECIES,
+        m_dot = 531.5,  # Kg/s
+        T = 1275.6,  # K
+        P = P_MAX/TURBINE_PRESSURE_RATIO,   # Pa
+        z = np.array([0.8924, 0.0708, 0.0003, 0.0036, 0.0329]),
+        phase = 'vapor',
+    )
+    states[hp_turbine_outlet.name] = hp_turbine_outlet
+
+    hp_turbine = Turbine(
+        name = 'HP Turbine',
+        efficiency = ETA_TURBINE,
+        P_out = P_MAX/TURBINE_PRESSURE_RATIO,
+        inlet = diluted_products,
+        outlet = hp_turbine_outlet,
+        TIT = DEFAULT_TURBINE_INLET_TEMPERATURE,
+    )
+    components[hp_turbine.name] = hp_turbine
+
+    hp_co2_cooling = State(
+        name = 'HP Turbine cooling CO2',
+        species = PRODUCT_SPECIES,
+        m_dot = 14.8,  # Kg/s
+        T = 437.5,
+        P = P_MAX/TURBINE_PRESSURE_RATIO,
+        z = np.array([0.9588, 0.0017, 0.0003, 0.0039, 0.0353]),
+    )
+    states[hp_co2_cooling.name] = hp_co2_cooling
+
+    ip_turbine_inlet = State(
+        name = 'IP Turbine Inlet',
+        species = PRODUCT_SPECIES,
+        m_dot = 546.3,  # Kg/s
+        T = 1254.6,  # K
+        P = P_MAX/TURBINE_PRESSURE_RATIO,
+        z = np.array([0.8942, 0.0690, 0.0003, 0.0037, 0.0328]),
+        phase = 'vapor',
+    )
+    states[ip_turbine_inlet.name] = ip_turbine_inlet
+
+    hp_coolant_mixer = Mixer(
+        name = "HP Turbine Coolant Mixer",
+        inlets = [hp_turbine_outlet, hp_co2_cooling],
+        outlet = ip_turbine_inlet,
+    )
+    components[hp_coolant_mixer.name] = hp_coolant_mixer
+
+    ip_turbine_outlet = State(
+        name = 'IP Turbine - Outlet',
+        species = PRODUCT_SPECIES,
+        m_dot = 546.3,  # Kg/s
+        T = 1124.2,  # K
+        P = P_MAX/(TURBINE_PRESSURE_RATIO**2),   # Pa
+        z = np.array([0.8942, 0.0690, 0.0003, 0.0037, 0.0328]),
+        phase = 'vapor',
+    )
+    states[ip_turbine_outlet.name] = ip_turbine_outlet
+
+    ip_turbine = Turbine(
+        name = 'IP Turbine',
+        efficiency = ETA_TURBINE,
+        P_out = P_MAX/(TURBINE_PRESSURE_RATIO**2),
+        inlet = ip_turbine_inlet,
+        outlet = ip_turbine_outlet,
+    )
+    components[ip_turbine.name] = ip_turbine
+
+    ip_co2_cooling = State(
+        name = 'IP Turbine cooling CO2',
+        species = PRODUCT_SPECIES,
+        m_dot = 6.8,  # Kg/s
+        T = 408.8,
+        P = P_MAX/(TURBINE_PRESSURE_RATIO**2),
+        z = np.array([0.9588, 0.0017, 0.0003, 0.0039, 0.0353]),
+    )
+    states[ip_co2_cooling.name] = ip_co2_cooling
+
+    coolant_splitter = TurbineCoolingSplitter(
+        name = 'Turbine Coolant Splitter',
+        cooling_coefficient = K_COOLING,
+        blade_temperature = BLADE_TEMP,
+        inlet = heated_co2_cooling,
+        outlets = [hp_co2_cooling, ip_co2_cooling],
+        hot_gas_inlets = [diluted_products, ip_turbine_inlet],
+        turbine_outlets = [hp_turbine_outlet, ip_turbine_outlet],
+    )
+    components[coolant_splitter.name] = coolant_splitter
+
+    lp_turbine_inlet = State(
+        name = 'LP Turbine Inlet',
+        species = PRODUCT_SPECIES,
+        m_dot = 553.1,  # Kg/s
+        T = 1116.2,  # K
+        P = P_MAX/(TURBINE_PRESSURE_RATIO**2),
+        z = np.array([0.8949, 0.0682, 0.0003, 0.0037, 0.0329]),
+        phase = 'vapor',
+    )
+    states[lp_turbine_inlet.name] = lp_turbine_inlet
+
+    ip_coolant_mixer = Mixer(
+        name = 'IP Turbine Coolant Mixer',
+        inlets = [ip_turbine_outlet, ip_co2_cooling],
+        outlet = lp_turbine_inlet,
+    )
+    components[ip_coolant_mixer.name] = ip_coolant_mixer
+
     lp_turbine_outlet = State(
         name = 'LP Turbine Outlet',
         species = PRODUCT_SPECIES,
-        m_dot = 600,  # Kg/s
-        T = 1200,  # K
+        m_dot = 553.1,  # Kg/s
+        T = 998.2,  # K
         P = P_MIN,
-        z = np.array([0.8973, 0.0839, 0.0011, 0.0177, 0.0001]),
+        z = np.array([0.8949, 0.0682, 0.0003, 0.0037, 0.0329]),
         phase = 'vapor',
     )
     states[lp_turbine_outlet.name] = lp_turbine_outlet
 
-    fake_products = Input(
-        name = 'Fake hot products',
-        m_dot = 600,  # Kg/s (Temporary)
-        T = 1200,  # K (Temporary)
-        P = P_MIN,
-        z = np.array([0.8973, 0.0839, 0.0011, 0.0177, 0.0001]),
+    lp_turbine = Turbine(
+        name = 'LP Turbine',
+        efficiency = ETA_TURBINE,
+        P_out = P_MIN,
+        inlet = lp_turbine_inlet,
         outlet = lp_turbine_outlet,
     )
-    components[fake_products.name] = fake_products
-
-    flue_gas = State(
-        name = 'Flue Gases',
-        species = PRODUCT_SPECIES,
-        m_dot = 600,  # Kg/s
-        T = 400,  # K
-        P = P_MIN*(1 - RECUPERATOR_PRESSURE_DROP_PERCENT/100),
-        z = np.array([0.8973, 0.0839, 0.0011, 0.0177, 0.0001]),
-        phase = 'vapor',
-    )
-    states[flue_gas.name] = flue_gas
+    components[lp_turbine.name] = lp_turbine
 
     # MSHX
     recuperator = Mod_MSHX(
@@ -377,89 +519,25 @@ def build_cycle():
     )
     components[recuperator.name] = recuperator
 
-    combustion_products = State(
-        name = 'Combustion Products',
+    condenser_liquid = State(
+        name = 'Condenser Liquid Outlet',
         species = PRODUCT_SPECIES,
-        m_dot = 273.16,  # Kg/s
-        T = 2055.79,  # K
-        P = P_MAX*(1 - RECUPERATOR_PRESSURE_DROP_PERCENT/100),
-        z = np.array([0.864920, 0.130786, 0.001404, 0.000353, 0.002537]),
+        m_dot = 16.4,  # kg/s
+        T = CONDENSER_OUTLET_TEMP,
+        P = P_MIN*(1 - RECUPERATOR_PRESSURE_DROP_PERCENT/100),
+        z = np.array([0.0148, 0.9849, 0.0001, 0.0001, 0.0001]),
+        phase = 'liquid',
     )
-    states[combustion_products.name] = combustion_products
+    states[condenser_liquid.name] = condenser_liquid
 
-    combustor = Combustor(
-        name = 'Combustor',
-        fuel = compressed_fuel,
-        oxidant = heated_oxidant,
-        outlet = combustion_products,
+    condenser = Condenser(
+        name = 'Flue Gas Condenser',
+        T_out = CONDENSER_OUTLET_TEMP,
+        inlet = flue_gas,
+        vapor_outlet = condenser_vapor,
+        liquid_outlet = condenser_liquid,
     )
-    components[combustor.name] = combustor
-
-    diluted_products = State(
-        name = 'Diluted Products',
-        species = PRODUCT_SPECIES,
-        m_dot = 486.93,  # Kg/s
-        T = 1695.01,  # K
-        P = P_MAX*(1 - RECUPERATOR_PRESSURE_DROP_PERCENT/100),
-        z = np.array([0.921133, 0.076247, 0.000857, 0.000247, 0.001516]),
-    )
-    states[diluted_products.name] = diluted_products
-
-    dilution_mixer = Mixer(
-        name = 'Dilution Mixer',
-        inlets = [combustion_products, heated_co2_dilution],
-        outlet = diluted_products,
-    )
-    components[dilution_mixer.name] = dilution_mixer
-
-    hp_turbine_outlet = State(
-        name = 'HP Turbine - Outlet',
-        species = PRODUCT_SPECIES,
-        m_dot = 486.93,  # Kg/s
-        T = 1531.41,  # K
-        P = P_MAX/TURBINE_PRESSURE_RATIO,   # Pa
-        z = np.array([0.921133, 0.076247, 0.000857, 0.000247, 0.001516]),
-    )
-    states[hp_turbine_outlet.name] = hp_turbine_outlet
-
-    hp_turbine = Turbine(
-        name = 'HP Turbine',
-        efficiency = ETA_TURBINE,
-        P_out = P_MAX/TURBINE_PRESSURE_RATIO,
-        inlet = diluted_products,
-        outlet = hp_turbine_outlet,
-    )
-    components[hp_turbine.name] = hp_turbine
-
-    ip_turbine_inlet = State(
-        name = 'IP Turbine Inlet',
-        species = PRODUCT_SPECIES,
-        m_dot = 500,  # Kg/s
-        T = 1500,  # K
-        P = P_MAX/TURBINE_PRESSURE_RATIO,
-        z = np.array([0.921133, 0.076247, 0.000857, 0.000247, 0.001516]),
-    )
-    states[ip_turbine_inlet.name] = ip_turbine_inlet
-
-    hp_co2_cooling = State(
-        name = 'HP Turbine cooling CO2',
-        species = PRODUCT_SPECIES,
-        m_dot = 15,  # Kg/s
-        T = COOLANT_TEMP,
-        P = P_MAX/TURBINE_PRESSURE_RATIO,
-        z = np.array([0.9990, 0.0007, 0.0001, 0.0001, 0.0001]),
-    )
-    states[hp_co2_cooling.name] = hp_co2_cooling
-
-    ip_co2_cooling = State(
-        name = 'IP Turbine cooling CO2',
-        species = PRODUCT_SPECIES,
-        m_dot = 10,  # Kg/s
-        T = COOLANT_TEMP,
-        P = P_MAX/(2*TURBINE_PRESSURE_RATIO),
-        z = np.array([0.9990, 0.0007, 0.0001, 0.0001, 0.0001]),
-    )
-    states[ip_co2_cooling.name] = ip_co2_cooling
+    components[condenser.name] = condenser
 
 
     x0 = np.asarray([

@@ -23,7 +23,7 @@ FORMATION_ENTHALPIES = {
 }
 
 
-def _configure_reference_states():
+def configure_reference_states():
     """Set a common CoolProp reference before creating any HEOS states."""
     for species in utils.ALL_SPECIES:
         CP.set_reference_state(species.fluid, 'DEF')
@@ -44,7 +44,7 @@ def _configure_reference_states():
         )
 
 
-_configure_reference_states()
+configure_reference_states()
 
 
 PHASE_NAMES = {

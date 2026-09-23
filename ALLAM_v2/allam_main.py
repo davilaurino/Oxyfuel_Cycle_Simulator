@@ -30,7 +30,8 @@ def main():
 
     if previous == 'p':
         if solution_path.exists():
-            x0 = np.load(solution_path)
+            saved_solution = np.load(solution_path)
+            x0 = saved_solution
         else:
             print('No saved solution found; using setup values.')
 
@@ -43,7 +44,19 @@ def main():
     )
 
     if success:
-        allam_report(states, components)
+        fuel = states['Fuel Compressor - Inlet']
+        oxygen = states['O2 - Inlet Stream']
+        fuel_lhv = sum(mass_fraction*species.LHV for mass_fraction, species in zip(fuel.w, fuel.species))
+        allam_report(
+            states,
+            components,
+            feeds=[fuel, oxygen],
+            products=[
+                states['Condenser Liquid Outlet'],
+                states['Purged CO2'],
+            ],
+            fuel_lhv=fuel_lhv,
+        )
 
         results = results_table(states)
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
