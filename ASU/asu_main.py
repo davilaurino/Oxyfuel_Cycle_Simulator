@@ -11,6 +11,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 import numpy as np
 
+from ASU import asu_config
 from ASU.asu_reporting import (
     gox_report,
     lox_report,
@@ -48,7 +49,13 @@ def main():
         else:
             print('No saved solution found; using setup values.')
 
-    x_final, success = solve(states, components, x0, solver=SOLVER)
+    x_final, success = solve(
+        states,
+        components,
+        x0,
+        solver=SOLVER,
+        config=asu_config,
+    )
 
     if success:
         print_states(states)

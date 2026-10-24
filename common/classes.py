@@ -2,15 +2,7 @@
 
 import numpy as np
 from common import utils
-
-from ASU.asu_config import (
-    COMPOSITION_SCALE,
-    ENERGY_SCALE,
-    FLOW_SCALE,
-    PRESSURE_SCALE,
-    SPECIFIC_ENTHALPY_SCALE,
-    TEMPERATURE_SCALE,
-)
+from common.residuals import ResidualScaling
 from common.thermo import (
     new_heos,
     ps_flash_enthalpy,
@@ -18,14 +10,6 @@ from common.thermo import (
     ps_liquid_enthalpy,
     update_state,
 )
-
-# Residual scaling factors.
-H_mult = 1.0/ENERGY_SCALE
-h_mult = 1.0/SPECIFIC_ENTHALPY_SCALE
-m_mult = 1.0/FLOW_SCALE
-T_mult = 1.0/TEMPERATURE_SCALE
-P_mult = 1.0/PRESSURE_SCALE
-z_mult = 1.0/COMPOSITION_SCALE
 
 class State:
     """A process stream backed by a reusable CoolProp HEOS state.
@@ -108,18 +92,18 @@ class Input:
         self.outlet = outlet
         self.m_dot = m_dot
 
-    def residuals(self):
+    def residuals(self, scaling: ResidualScaling):
         eqs = []
         outlet = self.outlet
 
         if self.m_dot is not None:
-            eqs.append((outlet.m_dot - self.m_dot)*m_mult)
+            eqs.append((outlet.m_dot - self.m_dot)*scaling.flow)
 
-        eqs.append((outlet.T - self.T)*T_mult)
-        eqs.append((outlet.P - self.P)*P_mult)
+        eqs.append((outlet.T - self.T)*scaling.temperature)
+        eqs.append((outlet.P - self.P)*scaling.pressure)
         
         for i in range(len(self.z) - 1):
-            eqs.append((outlet.z[i] - self.z[i])*z_mult)
+            eqs.append((outlet.z[i] - self.z[i])*scaling.composition)
 
         return eqs
 
@@ -150,7 +134,7 @@ class Mixer:
         self.inlet_mass_ratios = inlet_mass_ratios
         self.state_dependencies = (*inlets, outlet)
 
-    def residuals(self):
+    def residuals(self, scaling: ResidualScaling):
         eqs = []
         outlet = self.outlet
 
@@ -163,7 +147,8 @@ class Mixer:
             ):
                 target_ratio = ratio/reference_ratio
                 eqs.append(
-                    (inlet.m_dot - target_ratio*reference_inlet.m_dot)*m_mult
+                    (inlet.m_dot - target_ratio*reference_inlet.m_dot)
+                    * scaling.flow
                 )
 
         species_molar_flows = {}
@@ -182,14 +167,22 @@ class Mixer:
         for species in outlet.species:
             outlet_z.append(species_molar_flows[species]/total_molar_flow)
 
-        eqs.append((outlet.m_dot - sum(inlet.m_dot for inlet in self.inlets))*m_mult)
-        eqs.append((outlet.P - min(inlet.P for inlet in self.inlets))*P_mult)
+        eqs.append(
+            (outlet.m_dot - sum(inlet.m_dot for inlet in self.inlets))
+            * scaling.flow
+        )
+        eqs.append(
+            (outlet.P - min(inlet.P for inlet in self.inlets))
+            * scaling.pressure
+        )
 
         inlet_enthalpy_flow = sum(inlet.m_dot*inlet.h for inlet in self.inlets)
-        eqs.append((outlet.m_dot*outlet.h - inlet_enthalpy_flow)*H_mult)
+        eqs.append(
+            (outlet.m_dot*outlet.h - inlet_enthalpy_flow)*scaling.energy
+        )
 
         for i in range(len(outlet.z) - 1):
-            eqs.append((outlet.z[i] - outlet_z[i])*z_mult)
+            eqs.append((outlet.z[i] - outlet_z[i])*scaling.composition)
 
         return eqs
 
@@ -205,7 +198,7 @@ class Combustor:
         self.excess_o2 = excess_o2
         self.state_dependencies = (fuel, oxidant, outlet)
 
-    def residuals(self):
+    def residuals(self, scaling: ResidualScaling):
         fuel = self.fuel
         oxidant = self.oxidant
         outlet = self.outlet
@@ -245,17 +238,21 @@ class Combustor:
         if self.excess_o2 is not None:
             o2_index = oxidant.species.index(utils.O2)
             target_o2 = self.excess_o2*stoichiometric_o2/oxidant_molar_flow
-            eqs.append((oxidant.z[o2_index] - target_o2)*z_mult)
+            eqs.append(
+                (oxidant.z[o2_index] - target_o2)*scaling.composition
+            )
 
-        eqs.append((outlet.m_dot - fuel.m_dot - oxidant.m_dot)*m_mult)
-        eqs.append((outlet.P - oxidant.P)*P_mult)
+        eqs.append(
+            (outlet.m_dot - fuel.m_dot - oxidant.m_dot)*scaling.flow
+        )
+        eqs.append((outlet.P - oxidant.P)*scaling.pressure)
 
         for species, zi in zip(outlet.species[:-1], outlet.z[:-1]):
-            eqs.append((zi - product_z[species])*z_mult)
+            eqs.append((zi - product_z[species])*scaling.composition)
 
         enthalpy_in = fuel.m_dot*fuel.h + oxidant.m_dot*oxidant.h
         enthalpy_out = outlet.m_dot*outlet.h
-        eqs.append((enthalpy_in - enthalpy_out)*H_mult)
+        eqs.append((enthalpy_in - enthalpy_out)*scaling.energy)
 
         return eqs
 
@@ -274,20 +271,23 @@ class Compressor:
 
         self.thermo_state = new_heos(inlet.species)
 
-    def residuals(self):
+    def residuals(self, scaling: ResidualScaling):
         eqs = []
         inlet = self.inlet
         outlet = self.outlet
         P_out = inlet.P*self.pressure_ratio
 
-        eqs.append((outlet.m_dot - inlet.m_dot)*m_mult)
-        eqs.append((outlet.P - P_out)*P_mult)
+        eqs.append((outlet.m_dot - inlet.m_dot)*scaling.flow)
+        eqs.append((outlet.P - P_out)*scaling.pressure)
 
         for i in range(len(inlet.z) - 1):
-            eqs.append((outlet.z[i] - inlet.z[i])*z_mult)
+            eqs.append((outlet.z[i] - inlet.z[i])*scaling.composition)
 
         h_iso = ps_gas_enthalpy(self.thermo_state, P_out, inlet.s, outlet.z)
-        eqs.append(((outlet.h - inlet.h) - (h_iso - inlet.h)/self.efficiency)*h_mult)
+        eqs.append(
+            ((outlet.h - inlet.h) - (h_iso - inlet.h)/self.efficiency)
+            * scaling.specific_enthalpy
+        )
 
         self.W = inlet.m_dot*(inlet.h - outlet.h)
         return eqs
@@ -308,22 +308,25 @@ class Turbine:
 
         self.thermo_state = new_heos(inlet.species)
 
-    def residuals(self):
+    def residuals(self, scaling: ResidualScaling):
         eqs = []
         inlet = self.inlet
         outlet = self.outlet
 
-        eqs.append((outlet.m_dot - inlet.m_dot)*m_mult)
-        eqs.append((outlet.P - self.P_out)*P_mult)
+        eqs.append((outlet.m_dot - inlet.m_dot)*scaling.flow)
+        eqs.append((outlet.P - self.P_out)*scaling.pressure)
 
         for i in range(len(inlet.z) - 1):
-            eqs.append((outlet.z[i] - inlet.z[i])*z_mult)
+            eqs.append((outlet.z[i] - inlet.z[i])*scaling.composition)
 
         h_iso = ps_flash_enthalpy(self.thermo_state, self.P_out, inlet.s, inlet.z)
-        eqs.append(((inlet.h - outlet.h) - self.efficiency*(inlet.h - h_iso))*h_mult)
+        eqs.append(
+            ((inlet.h - outlet.h) - self.efficiency*(inlet.h - h_iso))
+            * scaling.specific_enthalpy
+        )
 
         if self.TIT is not None:
-            eqs.append((inlet.T - self.TIT)*T_mult)
+            eqs.append((inlet.T - self.TIT)*scaling.temperature)
 
         self.W = inlet.m_dot*(inlet.h - outlet.h)
         return eqs
@@ -346,19 +349,22 @@ class Pump:
 
         self.thermo_state = new_heos(inlet.species)
 
-    def residuals(self):
+    def residuals(self, scaling: ResidualScaling):
         eqs = []
         inlet = self.inlet
         outlet = self.outlet
 
-        eqs.append((outlet.m_dot - inlet.m_dot)*m_mult)
-        eqs.append((outlet.P - self.P_out)*P_mult)
+        eqs.append((outlet.m_dot - inlet.m_dot)*scaling.flow)
+        eqs.append((outlet.P - self.P_out)*scaling.pressure)
 
         for i in range(len(inlet.z) - 1):
-            eqs.append((outlet.z[i] - inlet.z[i])*z_mult)
+            eqs.append((outlet.z[i] - inlet.z[i])*scaling.composition)
 
         h_iso = ps_liquid_enthalpy(self.thermo_state, self.P_out, inlet.s, inlet.z)
-        eqs.append(((outlet.h - inlet.h) - (h_iso - inlet.h)/self.efficiency)*h_mult)
+        eqs.append(
+            ((outlet.h - inlet.h) - (h_iso - inlet.h)/self.efficiency)
+            * scaling.specific_enthalpy
+        )
 
         self.W = inlet.m_dot*(inlet.h - outlet.h)
         return eqs
@@ -376,18 +382,20 @@ class Intercooler:
         self.outlet = outlet
         self.Q_ext = None
 
-    def residuals(self):
+    def residuals(self, scaling: ResidualScaling):
         eqs = []
         inlet = self.inlet
         outlet = self.outlet
         pressure_ratio = 1.0 - self.pressure_drop_percent/100.0
 
-        eqs.append((outlet.m_dot - inlet.m_dot)*m_mult)
-        eqs.append((outlet.T - self.T_out)*T_mult)
-        eqs.append((outlet.P - inlet.P*pressure_ratio)*P_mult)
+        eqs.append((outlet.m_dot - inlet.m_dot)*scaling.flow)
+        eqs.append((outlet.T - self.T_out)*scaling.temperature)
+        eqs.append(
+            (outlet.P - inlet.P*pressure_ratio)*scaling.pressure
+        )
 
         for i in range(len(inlet.z) - 1):
-            eqs.append((outlet.z[i] - inlet.z[i])*z_mult)
+            eqs.append((outlet.z[i] - inlet.z[i])*scaling.composition)
 
         self.Q_ext = inlet.m_dot*(outlet.h - inlet.h)
         return eqs
@@ -420,7 +428,7 @@ class Condenser:
         self.state_dependencies = (inlet, vapor_outlet, liquid_outlet)
         self.Q_ext = None
 
-    def residuals(self):
+    def residuals(self, scaling: ResidualScaling):
         eqs = []
         inlet = self.inlet
         vapor = self.vapor_outlet
@@ -432,12 +440,12 @@ class Condenser:
             mass_in = inlet.m_dot*inlet.w[inlet_index]
             mass_out = (vapor.m_dot*vapor.w[vapor_index] + liquid.m_dot*liquid.w[liquid_index])
 
-            eqs.append((mass_in - mass_out)*m_mult)
+            eqs.append((mass_in - mass_out)*scaling.flow)
 
-        eqs.append((vapor.T - self.T_out)*T_mult)
-        eqs.append((liquid.T - self.T_out)*T_mult)
-        eqs.append((vapor.P - inlet.P)*P_mult)
-        eqs.append((liquid.P - inlet.P)*P_mult)
+        eqs.append((vapor.T - self.T_out)*scaling.temperature)
+        eqs.append((liquid.T - self.T_out)*scaling.temperature)
+        eqs.append((vapor.P - inlet.P)*scaling.pressure)
+        eqs.append((liquid.P - inlet.P)*scaling.pressure)
 
         for species in inlet.species:
             vapor_index = vapor.species.index(species)
@@ -445,7 +453,9 @@ class Condenser:
             fugacity_vapor = (vapor.phi[vapor_index] * vapor.z[vapor_index] * vapor.P)
             fugacity_liquid = (liquid.phi[liquid_index] * liquid.z[liquid_index] * liquid.P)
 
-            eqs.append((fugacity_vapor - fugacity_liquid)*P_mult)
+            eqs.append(
+                (fugacity_vapor - fugacity_liquid)*scaling.pressure
+            )
 
         self.Q_ext = (vapor.m_dot*vapor.h + liquid.m_dot*liquid.h - inlet.m_dot*inlet.h)
         return eqs
@@ -472,7 +482,7 @@ class ReboilerCondenser:
         self.Q_condenser = None
         self.Q_reboiler = None
 
-    def residuals(self):
+    def residuals(self, scaling: ResidualScaling):
         eqs = []
         cv_in = self.condenser_vapor_in
         cl_out = self.condenser_liquid_out
@@ -483,30 +493,32 @@ class ReboilerCondenser:
         self.Q_condenser = (cl_out.m_dot*cl_out.h - cv_in.m_dot*cv_in.h)
         self.Q_reboiler = (rl_out.m_dot*rl_out.h + rv_out.m_dot*rv_out.h - rl_in.m_dot*rl_in.h)
 
-        eqs.append((cv_in.m_dot - cl_out.m_dot)*m_mult)
+        eqs.append((cv_in.m_dot - cl_out.m_dot)*scaling.flow)
 
         for i in range(len(rl_in.species)):
             m_in_i = rl_in.m_dot*rl_in.w[i]
             m_out_i = (rl_out.m_dot*rl_out.w[i] + rv_out.m_dot*rv_out.w[i])
-            eqs.append((m_in_i - m_out_i)*m_mult)
+            eqs.append((m_in_i - m_out_i)*scaling.flow)
 
         # Careful! As the pinch is enforced and condenser oulet phase is imposed as liquid, the condensation must not be partial.
-        eqs.append((cl_out.T - rl_in.T - self.T_cold_pinch)*T_mult)
-        eqs.append((rl_out.T - rv_out.T)*T_mult)
+        eqs.append(
+            (cl_out.T - rl_in.T - self.T_cold_pinch)*scaling.temperature
+        )
+        eqs.append((rl_out.T - rv_out.T)*scaling.temperature)
 
-        eqs.append((cl_out.P - cv_in.P)*P_mult)
-        eqs.append((rl_out.P - rl_in.P)*P_mult)
-        eqs.append((rv_out.P - rl_in.P)*P_mult)
+        eqs.append((cl_out.P - cv_in.P)*scaling.pressure)
+        eqs.append((rl_out.P - rl_in.P)*scaling.pressure)
+        eqs.append((rv_out.P - rl_in.P)*scaling.pressure)
 
         for i in range(len(cl_out.z) - 1):
-            eqs.append((cl_out.z[i] - cv_in.z[i])*z_mult)
+            eqs.append((cl_out.z[i] - cv_in.z[i])*scaling.composition)
 
         for i in range(len(rl_in.species)):
             f_liquid = (rl_out.phi[i]*rl_out.z[i]*rl_out.P)
             f_vapor = (rv_out.phi[i]*rv_out.z[i]*rv_out.P)
-            eqs.append((f_liquid - f_vapor)*P_mult)
+            eqs.append((f_liquid - f_vapor)*scaling.pressure)
 
-        eqs.append((self.Q_reboiler + self.Q_condenser)*H_mult)
+        eqs.append((self.Q_reboiler + self.Q_condenser)*scaling.energy)
         return eqs
 
 
@@ -525,7 +537,7 @@ class O2Specification:
         self.purity_target = purity_target
         self.m_dot = m_dot
 
-    def residuals(self):
+    def residuals(self, scaling: ResidualScaling):
         eqs = []
         product = self.o2_product
 
@@ -534,9 +546,11 @@ class O2Specification:
                 o2_index = i
                 break
 
-        eqs.append((product.z[o2_index] - self.purity_target)*z_mult)
+        eqs.append(
+            (product.z[o2_index] - self.purity_target)*scaling.composition
+        )
         if self.m_dot is not None:
-            eqs.append((product.m_dot - self.m_dot)*m_mult)
+            eqs.append((product.m_dot - self.m_dot)*scaling.flow)
 
         return eqs
 
@@ -618,7 +632,7 @@ class Splitter:
                         raise ValueError('outlet flows must be nonnegative')
                     self._flow_targets[outlet] = ('flow', flow)
 
-    def residuals(self):
+    def residuals(self, scaling: ResidualScaling):
         eqs = []
         inlet = self.inlet
 
@@ -628,16 +642,21 @@ class Splitter:
                 if kind == 'fraction'
                 else target
             )
-            eqs.append((outlet.m_dot - target_flow)*m_mult)
+            eqs.append((outlet.m_dot - target_flow)*scaling.flow)
 
-        eqs.append((inlet.m_dot - sum(outlet.m_dot for outlet in self.outlets))*m_mult)
+        eqs.append(
+            (inlet.m_dot - sum(outlet.m_dot for outlet in self.outlets))
+            * scaling.flow
+        )
 
         for outlet in self.outlets:
-            eqs.append((outlet.T - inlet.T)*T_mult)
-            eqs.append((outlet.P - inlet.P)*P_mult)
+            eqs.append((outlet.T - inlet.T)*scaling.temperature)
+            eqs.append((outlet.P - inlet.P)*scaling.pressure)
 
             for i in range(len(inlet.z) - 1):
-                eqs.append((outlet.z[i] - inlet.z[i])*z_mult)
+                eqs.append(
+                    (outlet.z[i] - inlet.z[i])*scaling.composition
+                )
 
         return eqs
 
@@ -686,7 +705,7 @@ class TurbineCoolingSplitter:
             *turbine_outlets,
         )
 
-    def residuals(self):
+    def residuals(self, scaling: ResidualScaling):
         eqs = []
         inlet = self.inlet
         temperature_difference = self.blade_temperature - inlet.T
@@ -703,19 +722,25 @@ class TurbineCoolingSplitter:
                 / temperature_difference
             )
             required_flows.append(required_flow)
-            eqs.append((outlet.m_dot - required_flow)*m_mult)
+            eqs.append((outlet.m_dot - required_flow)*scaling.flow)
 
-        eqs.append((inlet.m_dot - sum(required_flows))*m_mult)
+        eqs.append(
+            (inlet.m_dot - sum(required_flows))*scaling.flow
+        )
 
         for outlet, turbine_outlet in zip(
             self.outlets,
             self.turbine_outlets,
         ):
-            eqs.append((outlet.P - turbine_outlet.P)*P_mult)
-            eqs.append((outlet.h - inlet.h)*h_mult)
+            eqs.append((outlet.P - turbine_outlet.P)*scaling.pressure)
+            eqs.append(
+                (outlet.h - inlet.h)*scaling.specific_enthalpy
+            )
 
             for i in range(len(inlet.z) - 1):
-                eqs.append((outlet.z[i] - inlet.z[i])*z_mult)
+                eqs.append(
+                    (outlet.z[i] - inlet.z[i])*scaling.composition
+                )
 
         return eqs
 
@@ -744,26 +769,34 @@ class Mod_MSHX:
         self.hot_streams = hot_streams
         self.Q = None
 
-    def residuals(self):
+    def residuals(self, scaling: ResidualScaling):
         eqs = []
         pressure_ratio = 1.0 - self.pressure_drop_percent/100.0
 
         for inlet, outlet in self.stream_pairs:
-            eqs.append((outlet.m_dot - inlet.m_dot)*m_mult)
-            eqs.append((outlet.P - inlet.P*pressure_ratio)*P_mult)
+            eqs.append((outlet.m_dot - inlet.m_dot)*scaling.flow)
+            eqs.append(
+                (outlet.P - inlet.P*pressure_ratio)*scaling.pressure
+            )
             for i in range(len(inlet.z) - 1):
-                            eqs.append((outlet.z[i] - inlet.z[i])*z_mult)
+                            eqs.append(
+                                (outlet.z[i] - inlet.z[i])
+                                * scaling.composition
+                            )
 
         for stream, temperature in self.fixed_temperatures:
-            eqs.append((stream.T - temperature)*T_mult)
+            eqs.append((stream.T - temperature)*scaling.temperature)
 
         for hot_stream, cold_stream, temperature_difference in self.approaches:
-            eqs.append((hot_stream.T - cold_stream.T - temperature_difference)*T_mult)
+            eqs.append(
+                (hot_stream.T - cold_stream.T - temperature_difference)
+                * scaling.temperature
+            )
 
         energy_balance = 0.0
         for inlet, outlet in self.stream_pairs:
             energy_balance += inlet.m_dot*(outlet.h - inlet.h)
-        eqs.append(energy_balance*H_mult)
+        eqs.append(energy_balance*scaling.energy)
 
         if self.hot_streams is not None:
             self.Q = 0.0
@@ -783,18 +816,18 @@ class Valve:
         self.inlet = inlet
         self.outlet = outlet
 
-    def residuals(self):
+    def residuals(self, scaling: ResidualScaling):
         eqs = []
         inlet = self.inlet
         outlet = self.outlet
 
-        eqs.append((outlet.m_dot - inlet.m_dot)*m_mult)
-        eqs.append((outlet.P - self.P_out)*P_mult)
+        eqs.append((outlet.m_dot - inlet.m_dot)*scaling.flow)
+        eqs.append((outlet.P - self.P_out)*scaling.pressure)
 
         for i in range(len(inlet.z) - 1):
-            eqs.append((outlet.z[i] - inlet.z[i])*z_mult)
+            eqs.append((outlet.z[i] - inlet.z[i])*scaling.composition)
 
-        eqs.append((outlet.h - inlet.h)*h_mult)
+        eqs.append((outlet.h - inlet.h)*scaling.specific_enthalpy)
         return eqs
 
 
@@ -819,7 +852,7 @@ class Tray:
         self.vapor_out = vapor_out
         self.feeds = feeds
 
-    def residuals(self):
+    def residuals(self, scaling: ResidualScaling):
         eqs = []
         L_in = self.liquid_in
         V_in = self.vapor_in
@@ -838,19 +871,19 @@ class Tray:
             for inlet in inlets:
                 m_in_i += inlet.m_dot*inlet.w[i]
             m_out_i = L_out.m_dot*L_out.w[i] + V_out.m_dot*V_out.w[i]
-            eqs.append((m_in_i - m_out_i)*m_mult)
+            eqs.append((m_in_i - m_out_i)*scaling.flow)
 
-        eqs.append((L_out.T - V_out.T)*T_mult)
-        eqs.append((L_out.P - self.P)*P_mult)
-        eqs.append((V_out.P - self.P)*P_mult)
+        eqs.append((L_out.T - V_out.T)*scaling.temperature)
+        eqs.append((L_out.P - self.P)*scaling.pressure)
+        eqs.append((V_out.P - self.P)*scaling.pressure)
 
         for i in range(len(L_out.species)):
             f_liquid = L_out.phi[i]*L_out.z[i]*L_out.P
             f_vapor = V_out.phi[i]*V_out.z[i]*V_out.P
-            eqs.append((f_liquid - f_vapor)*P_mult)
+            eqs.append((f_liquid - f_vapor)*scaling.pressure)
 
         H_in = sum(inlet.m_dot*inlet.h for inlet in inlets)
         H_out = L_out.m_dot*L_out.h + V_out.m_dot*V_out.h
 
-        eqs.append((H_in - H_out)*H_mult)
+        eqs.append((H_in - H_out)*scaling.energy)
         return eqs

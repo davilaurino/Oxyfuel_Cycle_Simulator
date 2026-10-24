@@ -5,33 +5,12 @@ import time
 import numpy as np
 from scipy.optimize import fsolve, least_squares
 
-from ASU.asu_config import (
-    COMPOSITION_SCALE,
-    COMPOSITION_BOUNDS,
-    FD_RELATIVE_STEP,
-    FLOW_SCALE,
-    FLOW_BOUNDS,
-    FSOLVE_FACTOR,
-    FSOLVE_MAXFEV,
-    FSOLVE_XTOL,
-    LEAST_SQUARES_FTOL,
-    LEAST_SQUARES_GTOL,
-    LEAST_SQUARES_MAX_NFEV,
-    LEAST_SQUARES_XTOL,
-    PRESSURE_SCALE,
-    PRESSURE_BOUNDS,
-    TEMPERATURE_SCALE,
-    TEMPERATURE_BOUNDS,
-)
-from common.residuals import evaluate_residuals
+from common.residuals import ResidualScaling, evaluate_residuals
 from common.thermo import CoolPropFailure
 
 
-def build_variable_scales(states, config=None):
+def build_variable_scales(states, config):
     """Return fixed engineering scales for each state variable."""
-    if config is None:
-        import ASU.asu_config as config
-
     scales = []
 
     for state in states.values():
@@ -45,11 +24,8 @@ def build_variable_scales(states, config=None):
 
     return np.array(scales, dtype=float)
 
-def build_bounds(states, config=None):
+def build_bounds(states, config):
     """Return physical bounds for least-squares and Jacobian probes."""
-    if config is None:
-        import ASU.asu_config as config
-
     lower = []
     upper = []
 
@@ -94,7 +70,7 @@ def color_columns(pattern):
 
     return groups
 
-def build_jacobian_sparsity(states, components):
+def build_jacobian_sparsity(states, components, residual_scaling):
     """Build a conservative equation/variable dependency matrix."""
     state_columns = {}
     column = 0
@@ -103,7 +79,10 @@ def build_jacobian_sparsity(states, components):
         state_columns[state] = np.arange(column, column + width)
         column += width
 
-    row_counts = [len(component.residuals()) for component in components.values()]
+    row_counts = [
+        len(component.residuals(residual_scaling))
+        for component in components.values()
+    ]
     pattern = np.zeros((sum(row_counts), column), dtype=bool)
 
     row = 0
@@ -145,15 +124,13 @@ class ColoredFiniteDifferenceJacobian:
 
         return jacobian
 
-def solve(states, components, x0, solver='fsolve', config=None):
+def solve(states, components, x0, solver='fsolve', *, config):
     """Solve a process model and return ``(physical_solution, success)``."""
 
     start = time.perf_counter()
     counter = [0]
 
-    if config is None:
-        import ASU.asu_config as config
-
+    residual_scaling = ResidualScaling.from_config(config)
     variable_scales = build_variable_scales(states, config)
     scaled_x0 = x0/variable_scales
 
@@ -163,6 +140,7 @@ def solve(states, components, x0, solver='fsolve', config=None):
                 scaled_variables*variable_scales,
                 states,
                 components,
+                residual_scaling,
                 start,
                 counter,
             )
@@ -174,7 +152,11 @@ def solve(states, components, x0, solver='fsolve', config=None):
     lower, upper = build_bounds(states, config)
     lower_scaled = lower/variable_scales
     upper_scaled = upper/variable_scales
-    jacobian_pattern = build_jacobian_sparsity(states, components)
+    jacobian_pattern = build_jacobian_sparsity(
+        states,
+        components,
+        residual_scaling,
+    )
     jacobian = ColoredFiniteDifferenceJacobian(
         scaled_residuals,
         jacobian_pattern,
@@ -215,7 +197,12 @@ def solve(states, components, x0, solver='fsolve', config=None):
     elapsed = time.perf_counter() - start
 
     # Ensure the model objects contain the returned solution.
-    residuals = evaluate_residuals(x_final, states, components)
+    residuals = evaluate_residuals(
+        x_final,
+        states,
+        components,
+        residual_scaling,
+    )
     residual_norm = np.linalg.norm(residuals)
     max_residual = np.max(np.abs(residuals))
 
